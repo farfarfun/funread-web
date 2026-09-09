@@ -1,0 +1,94 @@
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --focus-ring: #6d5ef8;
+  --bg-canvas: #f2f3f6;
+}
+
+:root.dark {
+  --bg-canvas: #0b0c10;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg-canvas);
+  letter-spacing: 0;
+  transition: background 0.2s var(--ease);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+:where(a, button) {
+  touch-action: manipulation;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+
+@media (pointer: coarse) {
+  .n-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .n-input,
+  .n-base-selection-label {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 600px) {
+  .n-pagination > .n-select,
+  .n-pagination-quick-jumper {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

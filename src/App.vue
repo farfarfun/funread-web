@@ -1,64 +1,51 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import type { GlobalThemeOverrides } from "naive-ui";
+import { darkTheme, dateZhCN, zhCN } from "naive-ui";
+import { computed, ref, watchEffect } from "vue";
 
-interface SourceListRecord {
-  id: number;
-  url: string;
-  source_type: string;
-  source_count: number;
-  updated_at: string;
+import SourcesView from "./views/SourcesView.vue";
+
+const storedTheme = localStorage.getItem("funread.theme");
+const dark = ref(storedTheme ? storedTheme === "dark" : true);
+const theme = computed(() => (dark.value ? darkTheme : null));
+
+watchEffect(() => document.documentElement.classList.toggle("dark", dark.value));
+
+function toggleTheme() {
+  dark.value = !dark.value;
+  localStorage.setItem("funread.theme", dark.value ? "dark" : "light");
 }
 
-interface SourceListPage {
-  items: SourceListRecord[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
-const sources = ref<SourceListRecord[]>([]);
-const error = ref<string | null>(null);
-const loading = ref(true);
-
-onMounted(async () => {
-  try {
-    const response = await fetch(`${apiBaseUrl}/api/v1/sources`);
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-    const page: SourceListPage = await response.json();
-    sources.value = page.items;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    loading.value = false;
-  }
-});
+const primary = "#6D5EF8";
+const themeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: primary,
+    primaryColorHover: "#7C6FFA",
+    primaryColorPressed: "#5B4EE5",
+    primaryColorSuppl: "rgba(109, 94, 248, 0.16)",
+    borderRadius: "10px",
+    borderRadiusSmall: "6px",
+    fontFamily:
+      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+  },
+  Card: { borderRadius: "8px" },
+  Button: { borderRadiusMedium: "8px", borderRadiusSmall: "6px", borderRadiusTiny: "6px" },
+  Input: { borderRadius: "8px" },
+};
 </script>
 
 <template>
-  <main>
-    <h1>funread sources</h1>
-    <p v-if="loading">Loading…</p>
-    <p v-else-if="error">Failed to load sources: {{ error }}</p>
-    <table v-else>
-      <thead>
-        <tr>
-          <th>url</th>
-          <th>source_type</th>
-          <th>source_count</th>
-          <th>updated_at</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="source in sources" :key="source.id">
-          <td>{{ source.url }}</td>
-          <td>{{ source.source_type }}</td>
-          <td>{{ source.source_count }}</td>
-          <td>{{ source.updated_at }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </main>
+  <n-config-provider
+    :theme="theme"
+    :theme-overrides="themeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
+    <n-global-style />
+    <n-dialog-provider>
+      <n-message-provider>
+        <SourcesView :dark="dark" @toggle-theme="toggleTheme" />
+      </n-message-provider>
+    </n-dialog-provider>
+  </n-config-provider>
 </template>
