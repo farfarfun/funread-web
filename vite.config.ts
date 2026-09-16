@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue(), Components({ resolvers: [NaiveUiResolver()], dts: false })],
-    server: { port: 8811, strictPort: true, proxy },
-    preview: { port: 8811, strictPort: true, proxy },
+    server: { host: "0.0.0.0", port: 8811, strictPort: true, proxy },
+    preview: { host: "0.0.0.0", port: 8811, strictPort: true, proxy },
   };
 });
