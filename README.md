@@ -1,6 +1,6 @@
 # funread-web
 
-[funread](https://github.com/farfarfun/funread) 的采集源管理界面。
+[funread-api](https://github.com/farfarfun/funread-api)（依赖 [funread](https://github.com/farfarfun/funread) 核心库）的采集源管理界面。
 
 | 组件 | 默认地址 |
 | --- | --- |
@@ -9,7 +9,7 @@
 
 ```bash
 # 终端 A
-cd ../funread
+cd ../funread-api
 FUNREAD_DATABASE_URL="sqlite:////tmp/funread-dev.db" uv run funread-api
 
 # 终端 B
