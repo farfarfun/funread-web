@@ -14,5 +14,18 @@ export default defineConfig(({ mode }) => {
     plugins: [vue(), Components({ resolvers: [NaiveUiResolver()], dts: false })],
     server: { host: "0.0.0.0", port: 8811, strictPort: true, proxy },
     preview: { host: "0.0.0.0", port: 8811, strictPort: true, proxy },
+    build: {
+      // naive-ui 本身就 ~500kB，拆到独立 vendor chunk 后已经跟业务代码解耦、能长期缓存，
+      // 不需要为了消掉警告再继续拆分组件库本身。
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            "vue-vendor": ["vue"],
+            "naive-ui-vendor": ["naive-ui"],
+          },
+        },
+      },
+    },
   };
 });
