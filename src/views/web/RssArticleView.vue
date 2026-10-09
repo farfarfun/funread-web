@@ -17,6 +17,7 @@ import type { RssArticleDetail } from "../../api/types";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
+import { useShortcuts } from "../../composables/useShortcuts";
 
 /** 允许留在正文里的标签。其余一律拆掉但保留内部文字。 */
 const ALLOWED_TAGS = new Set([
@@ -180,6 +181,18 @@ async function toggleFavorite() {
     message.error(reason instanceof Error ? reason.message : "操作失败");
   }
 }
+
+useShortcuts({
+  s: () => (showSettings.value = !showSettings.value),
+  f: () => void toggleFavorite(),
+  Escape: () => {
+    if (showSettings.value) {
+      showSettings.value = false;
+      return;
+    }
+    router.push({ name: "rss-feed", params: { subId: subId.value } });
+  },
+});
 
 onMounted(load);
 </script>

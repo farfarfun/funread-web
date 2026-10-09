@@ -3,23 +3,12 @@
  * 底部 TabBar。固定在视口底部，并把 `env(safe-area-inset-bottom)` 加进内边距
  * —— 否则在带手势条的 iPhone 上，最后一行按钮会被系统条压掉一半。
  */
-import {
-  CompassOutline,
-  LibraryOutline,
-  NewspaperOutline,
-  PersonOutline,
-} from "@vicons/ionicons5";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
-const route = useRoute();
+import { TABS } from "./navigation";
 
-const TABS = [
-  { key: "shelf", label: "书架", to: { name: "shelf" }, icon: LibraryOutline },
-  { key: "discover", label: "发现", to: { name: "explore" }, icon: CompassOutline },
-  { key: "rss", label: "订阅", to: { name: "rss" }, icon: NewspaperOutline },
-  { key: "account", label: "我的", to: { name: "account" }, icon: PersonOutline },
-] as const;
+const route = useRoute();
 
 //  用 meta.tab 而不是路由名：详情页（如 /web/book/x）没有自己的 tab，
 //  这时四个都不高亮，比错高亮一个要好。

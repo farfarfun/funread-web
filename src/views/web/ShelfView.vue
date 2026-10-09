@@ -10,6 +10,7 @@ import type { ShelfBook } from "../../api/types";
 import BookCover from "../../components/web/BookCover.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useShortcuts } from "../../composables/useShortcuts";
 
 type ViewMode = "grid" | "list";
 type SortKey = "recent" | "added" | "name";
@@ -85,6 +86,11 @@ async function remove(book: ShelfBook) {
     message.error(reason instanceof Error ? reason.message : "移出失败");
   }
 }
+
+useShortcuts({
+  "/": () => router.push({ name: "search" }),
+  g: () => setMode(mode.value === "grid" ? "list" : "grid"),
+});
 
 onMounted(load);
 //  从正文页返回时进度变了，书架上的「读到第 N 章」要跟着更新
@@ -278,5 +284,14 @@ onActivated(load);
 
 .row__progress {
   color: var(--accent);
+}
+
+@media (min-width: 900px) {
+  /* 列宽设上限，否则宽屏上会变成二十列小方块。minmax 的上界比下界大，
+     所以窗口变窄时会先压缩列宽、再减少列数。 */
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 164px));
+    justify-content: start;
+  }
 }
 </style>

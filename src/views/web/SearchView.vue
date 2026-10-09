@@ -21,6 +21,7 @@ import BookCard from "../../components/web/BookCard.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useSearchHistory } from "../../composables/useSearchHistory";
+import { useShortcuts } from "../../composables/useShortcuts";
 
 const PAGE_SIZE = 20;
 
@@ -29,6 +30,7 @@ const message = useMessage();
 const { history, remember, forget, clear } = useSearchHistory();
 
 const keyword = ref("");
+const input = ref<{ focus: () => void } | null>(null);
 const loading = ref(false);
 const loadingMore = ref(false);
 const error = ref("");
@@ -89,6 +91,17 @@ async function more() {
   }
 }
 
+//  `/` 聚焦搜索框是搜索类界面的通用约定（GitHub、Gmail 都是）。
+//  useShortcuts 已经保证输入框内不拦截，所以不会和编辑冲突。
+useShortcuts({
+  "/": () => input.value?.focus(),
+  Escape: () => {
+    keyword.value = "";
+    page.value = null;
+    items.value = [];
+  },
+});
+
 function open(book: SearchBook) {
   //  详情页要 url_id + book_url 才能发请求，搜索结果里带着，直接走 query
   //  传过去，省掉一次「详情页再反查来源」的往返。
@@ -112,6 +125,7 @@ function open(book: SearchBook) {
 
     <div class="search">
       <n-input
+        ref="input"
         v-model:value="keyword"
         placeholder="搜书名或作者"
         clearable

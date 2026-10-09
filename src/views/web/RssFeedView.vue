@@ -10,6 +10,7 @@ import type { RssArticle, RssCategory, Subscription } from "../../api/types";
 import ArticleCard from "../../components/web/ArticleCard.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useShortcuts } from "../../composables/useShortcuts";
 
 const route = useRoute();
 const router = useRouter();
@@ -162,6 +163,12 @@ async function readAll() {
     message.error(reason instanceof Error ? reason.message : "操作失败");
   }
 }
+
+useShortcuts({
+  r: () => void refresh(),
+  a: () => void readAll(),
+  Escape: () => router.push({ name: "rss" }),
+});
 
 onMounted(bootstrap);
 </script>

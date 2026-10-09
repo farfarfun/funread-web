@@ -51,3 +51,41 @@ body {
     font-size: max(16px, 1em);
   }
 }
+
+/* ---------------------------------------------------------------- 桌面端
+ *
+ * 断点 900px，和 `useViewport.WIDE_BREAKPOINT` 对齐 —— 两处必须一致，否则
+ * JS 认为自己在桌面布局而 CSS 还在移动布局（或反过来），会出现侧栏和底栏同时
+ * 存在这类错位。
+ *
+ * 宽度和输入方式是两件事：这一段只管「有横向空间」。触控区尺寸由
+ * `@media (pointer: coarse)` 单独管（见 tokens.css）—— 触屏笔记本两条都命中。
+ */
+
+:root {
+  /* 阅读与列表内容的最大宽度。超过这个宽度一行的字数会多到看着累，
+     而且眼睛要横扫整个屏幕。 */
+  --content-max: 56rem;
+  /* 桌面侧栏宽度 */
+  --rail-width: 200px;
+}
+
+/*
+ * 具体的布局覆盖写在各组件的 scoped 样式里，不写在这里 —— scoped 规则编译成
+ * `.grid[data-v-x]`（特异性 0,2,0），全局的 `.grid`（0,1,0）盖不住它，而媒体
+ * 查询不增加特异性。放在这里会静默失效。
+ */
+
+/* 鼠标可用时才上 hover —— 触屏上 hover 会「粘住」在最后点过的元素上 */
+@media (hover: hover) and (pointer: fine) {
+  .n-list-item:hover {
+    background: var(--surface-sunken);
+  }
+}
+
+/* 桌面上给键盘可达性更明显的焦点环（触屏上这个环是噪音） */
+@media (pointer: fine) {
+  :where(a, button, [tabindex]):focus-visible {
+    outline-offset: 3px;
+  }
+}

@@ -37,6 +37,8 @@ import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
+import { useShortcuts } from "../../composables/useShortcuts";
+import { useViewport } from "../../composables/useViewport";
 
 /** 进度回写间隔。短了打库太频，长了切走会丢进度。 */
 const SAVE_THROTTLE_MS = 3000;
@@ -47,6 +49,7 @@ const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const { settings, colors, contentStyle } = useReaderSettings();
+const { isTouch, isWide } = useViewport();
 
 const bookKey = computed(() => String(route.params.bookKey));
 
@@ -238,8 +241,18 @@ async function pick(chapter: Chapter) {
   await go(position - index.value);
 }
 
-/** 点击中部开/关工具栏，左右边缘翻章。 */
+/**
+ * 点击处理。**边缘翻章只在触屏上启用。**
+ *
+ * 桌面上左右各 25% 的「触控带」是 640px 的死区（2560px 屏），而且鼠标用户会把
+ * 点击理解成选中文字而不是翻页 —— 想复制一段话结果跳章了。桌面靠键盘（←/→）
+ * 和常驻的翻章按钮，所以这里整屏都只切工具栏。
+ */
 function onTap(event: MouseEvent) {
+  if (!isTouch.value) {
+    showToolbar.value = !showToolbar.value;
+    return;
+  }
   const width = window.innerWidth;
   const x = event.clientX;
   if (x < width * EDGE_RATIO) {
@@ -368,6 +381,35 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
+/**
+ * 键盘导航。桌面上这是**主要**翻章方式 —— 点屏幕左右 25% 在 2560px 宽的屏幕上
+ * 是 640px 的死区，完全反直觉。
+ *
+ * Esc 的层级按「最内层先关」：抽屉 → 工具栏 → 回详情页。这和用户的预期一致，
+ * 也避免一次 Esc 把人直接弹出正文。
+ */
+useShortcuts({
+  ArrowLeft: () => void go(-1),
+  ArrowRight: () => void go(1),
+  //  空格/PageDown 翻页是浏览器默认行为（滚动），不拦 —— 滚动式阅读里那本来就对
+  t: () => (showToc.value = !showToc.value),
+  s: () => (showSettings.value = !showSettings.value),
+  h: () => (showSources.value ? undefined : openSources()),
+  Escape: () => {
+    if (showToc.value || showSettings.value || showSources.value) {
+      showToc.value = false;
+      showSettings.value = false;
+      showSources.value = false;
+      return;
+    }
+    if (showToolbar.value) {
+      showToolbar.value = false;
+      return;
+    }
+    router.push({ name: "book", params: { bookKey: bookKey.value } });
+  },
+});
+
 watch(() => settings.value.theme, () => undefined);
 </script>
 
@@ -410,6 +452,29 @@ watch(() => settings.value.theme, () => undefined);
         </div>
       </article>
     </div>
+
+    <!-- 桌面常驻翻章按钮。触屏上不显示 —— 那里有边缘手势，再加两个浮标只会
+         遮住正文。 -->
+    <template v-if="!isTouch && isWide && !loading && !error">
+      <button
+        v-if="hasPrev"
+        type="button"
+        class="pager pager--prev"
+        aria-label="上一章（左方向键）"
+        @click.stop="go(-1)"
+      >
+        <n-icon size="22"><ChevronBackOutline /></n-icon>
+      </button>
+      <button
+        v-if="hasNext"
+        type="button"
+        class="pager pager--next"
+        aria-label="下一章（右方向键）"
+        @click.stop="go(1)"
+      >
+        <n-icon size="22"><ChevronForwardOutline /></n-icon>
+      </button>
+    </template>
 
     <Transition name="slide-up">
       <div v-if="showToolbar" class="toolbar" @click.stop>
@@ -485,6 +550,8 @@ watch(() => settings.value.theme, () => undefined);
 }
 
 .reader__body {
+  /* em 而不是 rem：跟着用户设的字号走。44em 在 18px 下约 790px，
+     一行 40 来个汉字 —— 中文长文的舒适区间。桌面上不该因为屏幕宽就加宽。 */
   max-width: 44em;
   margin: 0 auto;
   padding-top: var(--space-5);
@@ -525,6 +592,37 @@ watch(() => settings.value.theme, () => undefined);
   background: var(--surface-raised);
   border-top: 1px solid var(--border-subtle);
   backdrop-filter: blur(12px);
+}
+
+/* 桌面常驻翻章按钮：贴在内容两侧的空白里，不压正文 */
+.pager {
+  position: fixed;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 64px;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  cursor: pointer;
+  opacity: 0.45;
+  transform: translateY(-50%);
+  transition: opacity 0.15s var(--ease);
+}
+
+.pager:hover {
+  opacity: 1;
+}
+
+.pager--prev {
+  left: var(--space-4);
+}
+
+.pager--next {
+  right: var(--space-4);
 }
 
 .slide-up-enter-active,
