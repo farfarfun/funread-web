@@ -31,7 +31,10 @@ import { listen } from "../server/serve.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(HERE, "..");
 const DIST_ROOT = path.join(APP_ROOT, "dist");
-const PACKAGE_NAME = "funread-web";
+//  npm 包名，upgrade/rollback/uninstall 要用它。带 @farfarfun scope（包发在
+//  Codeup 私有 registry 上，scope 是 npm 找到它的唯一线索），而命令名 CLI_NAME
+//  不带 scope —— 不要把这两个混为一谈。
+const PACKAGE_NAME = "@farfarfun/funread-web";
 
 const SERVER_ACTIONS = ["start", "run", "restart", "stop", "status"];
 const FLAGS_WITH_VALUES = new Set(["--config", "--port", "--host", "--backend"]);

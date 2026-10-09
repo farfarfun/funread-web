@@ -9,7 +9,9 @@ cd "${ROOT}"
 
 SERVICE_NAME="web"
 CLI_NAME="funread-web"
-PKG_NAME="funread-web"
+# npm 包名带 @farfarfun scope，命令名不带 —— 两者故意不一样：scope 决定
+# 从哪个 registry 装（见 package.json 的 publishConfig），命令名是用户敲的那个。
+PKG_NAME="@farfarfun/funread-web"
 PORT=8811
 # 留空 = 用 CLI 自己的默认路径
 # ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/config.toml。

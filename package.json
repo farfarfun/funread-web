@@ -1,5 +1,5 @@
 {
-  "name": "funread-web",
+  "name": "@farfarfun/funread-web",
   "version": "0.0.5",
   "description": "funread 前端服务：/admin 采集源管理端与 /web 阅读端，运行时反代 /api 到 funread-api",
   "type": "module",
@@ -19,6 +19,9 @@
     "server",
     "dist"
   ],
+  "publishConfig": {
+    "registry": "https://farfarfun-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/npm/funnpm/"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
