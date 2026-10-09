@@ -108,7 +108,7 @@ function open(book: SearchBook) {
 
 <template>
   <div>
-    <TopBar title="发现" />
+    <TopBar title="搜索" back fallback="/web/explore" />
 
     <div class="search">
       <n-input

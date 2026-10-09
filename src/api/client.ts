@@ -7,6 +7,11 @@ import type {
   CollectReport,
   DownloadAccepted,
   DownloadProgress,
+  ExploreKind,
+  ExplorePage,
+  ExploreSourcePage,
+  PoolPage,
+  PoolSource,
   RssArticleDetail,
   RssArticlePage,
   RssCategory,
@@ -117,6 +122,24 @@ export const api = {
     request<SwitchSourcePage>("/reader/sources", { params: { book_key } }),
   scan: (source_type: SourceType = "book", limit?: number) =>
     request<ScanReport>("/reader/scan", { method: "POST", params: { source_type, limit } }),
+
+  // -------------------------------------------------------------- 发现页
+  exploreSources: (params: { q?: string; limit?: number; offset?: number }) =>
+    request<ExploreSourcePage>("/reader/explore/sources", { params }),
+  exploreKinds: (url_id: number) =>
+    request<ExploreKind[]>("/reader/explore/kinds", { params: { url_id } }),
+  //  `url` 是 exploreKinds 给的不透明令牌，原样回传。
+  explore: (params: { url_id: number; url: string; page?: number }) =>
+    request<ExplorePage>("/reader/explore", { params }),
+
+  // -------------------------------------------------------------- 候选源池（B 端）
+  pool: (params: { source_type?: SourceType; q?: string; state?: string; limit?: number; offset?: number }) =>
+    request<PoolPage>("/pool", { params }),
+  patchPoolSource: (
+    source_type: SourceType,
+    url_id: number,
+    payload: { enabled?: boolean; weight?: number; reset_failures?: boolean },
+  ) => request<PoolSource>(`/pool/${source_type}/${url_id}`, { method: "PATCH", ...json(payload) }),
 
   // -------------------------------------------------------------- 书架
   shelf: () => request<ShelfBook[]>("/shelf"),

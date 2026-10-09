@@ -32,12 +32,77 @@ export interface CollectReport {
   error: string | null;
 }
 
+// ---------------------------------------------------------------- 发现页
+
+export interface ExploreSource {
+  url_id: number;
+  name: string;
+  kinds: string[];
+}
+
+export interface ExploreSourcePage {
+  items: ExploreSource[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ExploreKind {
+  name: string;
+  /**
+   * 源里**原样声明**的串，不是绝对地址。当不透明令牌原样回传 —— 它可能带 URL
+   * 选项（`,{"method":"POST"}`），引擎会先拆选项再拼 base_url。
+   */
+  url: string;
+}
+
+export interface ExplorePage {
+  items: SearchBook[];
+  total: number;
+  page: number;
+}
+
+// ---------------------------------------------------------------- 候选源池（B 端）
+
+export interface PoolSource {
+  source_type: SourceType;
+  url_id: number;
+  name: string;
+  enabled: boolean;
+  weight: number;
+  is_complete: boolean;
+  needs_js: boolean;
+  has_explore: boolean;
+  fail_count: number;
+  /** 最近一次实跑成功。**这是唯一可信的可用性信号。** */
+  last_ok_at: string;
+  last_error: string;
+}
+
+export interface PoolPage {
+  items: PoolSource[];
+  total: number;
+  limit: number;
+  offset: number;
+  /** 整个分区的汇总，和当前页无关。`proven` 才是池子的真实健康度。 */
+  summary: {
+    total: number;
+    enabled: number;
+    complete: number;
+    needs_js: number;
+    has_explore: number;
+    proven: number;
+    failing: number;
+  };
+}
+
 export interface ScanReport {
   source_type: SourceType;
   scanned: number;
   complete: number;
   needs_js: number;
   web_view: number;
+  has_explore: number;
   enabled: number;
 }
 

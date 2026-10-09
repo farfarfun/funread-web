@@ -77,7 +77,7 @@ onActivated(load);
   <div>
     <TopBar title="订阅">
       <template #actions>
-        <n-button quaternary circle aria-label="收藏" @click="router.push({ name: 'rss', query: { tab: 'fav' } })">
+        <n-button quaternary circle aria-label="收藏" @click="router.push({ name: 'rss-favorites' })">
           <template #icon><n-icon><StarOutline /></n-icon></template>
         </n-button>
         <n-button quaternary circle aria-label="添加订阅" @click="showAdd = true">

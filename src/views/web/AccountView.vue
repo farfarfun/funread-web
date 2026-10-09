@@ -123,8 +123,22 @@ onMounted(() => {
         </template>
       </n-list-item>
 
+      <n-list-item @click="router.push({ name: 'rss-favorites' })">
+        <div class="row"><span>收藏的文章</span></div>
+      </n-list-item>
+
       <n-list-item @click="router.push({ name: 'rss-sources' })">
         <div class="row"><span>订阅源目录</span></div>
+      </n-list-item>
+
+      <n-list-item>
+        <div class="row">
+          <span>候选源池</span>
+          <span class="row__value">管理端</span>
+        </div>
+        <template #suffix>
+          <n-button size="small" quaternary tag="a" href="/admin/pool">打开</n-button>
+        </template>
       </n-list-item>
 
       <n-list-item>

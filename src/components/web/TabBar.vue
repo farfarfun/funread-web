@@ -4,10 +4,10 @@
  * —— 否则在带手势条的 iPhone 上，最后一行按钮会被系统条压掉一半。
  */
 import {
+  CompassOutline,
   LibraryOutline,
   NewspaperOutline,
   PersonOutline,
-  SearchOutline,
 } from "@vicons/ionicons5";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
@@ -16,7 +16,7 @@ const route = useRoute();
 
 const TABS = [
   { key: "shelf", label: "书架", to: { name: "shelf" }, icon: LibraryOutline },
-  { key: "discover", label: "发现", to: { name: "search" }, icon: SearchOutline },
+  { key: "discover", label: "发现", to: { name: "explore" }, icon: CompassOutline },
   { key: "rss", label: "订阅", to: { name: "rss" }, icon: NewspaperOutline },
   { key: "account", label: "我的", to: { name: "account" }, icon: PersonOutline },
 ] as const;

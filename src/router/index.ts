@@ -32,10 +32,18 @@ const routes: RouteRecordRaw[] = [
         meta: { tab: "shelf", title: "书架" },
       },
       {
+        //  发现 = 按分类浏览（不知道要什么时）；搜索 = 知道要什么时。
+        //  两者后端完全不同（浏览是单源，搜索是跨源 fan-out），所以分两页。
+        path: "explore",
+        name: "explore",
+        component: () => import("../views/web/ExploreView.vue"),
+        meta: { tab: "discover", title: "发现" },
+      },
+      {
         path: "search",
         name: "search",
         component: () => import("../views/web/SearchView.vue"),
-        meta: { tab: "discover", title: "发现" },
+        meta: { tab: "discover", title: "搜索" },
       },
       {
         path: "book/:bookKey",
@@ -55,6 +63,12 @@ const routes: RouteRecordRaw[] = [
         name: "rss",
         component: () => import("../views/web/RssView.vue"),
         meta: { tab: "rss", title: "订阅" },
+      },
+      {
+        path: "rss/favorites",
+        name: "rss-favorites",
+        component: () => import("../views/web/FavoritesView.vue"),
+        meta: { tab: "rss", title: "收藏" },
       },
       {
         path: "rss/sources",
@@ -105,6 +119,14 @@ const routes: RouteRecordRaw[] = [
         name: "admin-sources",
         component: () => import("../views/admin/SourcesView.vue"),
         meta: { admin: true, title: "采集源管理" },
+      },
+      {
+        //  和 /admin/sources 不是一回事：那一页管产出源列表的 URL，
+        //  这一页管采集下来的单个源的可用性与启停。
+        path: "pool",
+        name: "admin-pool",
+        component: () => import("../views/admin/PoolView.vue"),
+        meta: { admin: true, title: "候选源池" },
       },
       {
         path: "login",

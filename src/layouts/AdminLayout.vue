@@ -43,8 +43,40 @@ const themeOverrides: GlobalThemeOverrides = {
     <n-global-style />
     <n-dialog-provider>
       <n-message-provider>
+        <!-- 两页容易混（一个管产出源列表的 URL，一个管采集下来的单个源），
+             所以导航上并排放着，而不是藏在各自页里互相跳 -->
+        <nav v-if="!$route.meta.bare" class="admin-nav">
+          <RouterLink :to="{ name: 'admin-sources' }" class="admin-nav__item">采集源</RouterLink>
+          <RouterLink :to="{ name: 'admin-pool' }" class="admin-nav__item">候选源池</RouterLink>
+          <a class="admin-nav__item admin-nav__item--out" href="/web">回阅读端 ›</a>
+        </nav>
         <RouterView :dark="dark" @toggle-theme="toggle" />
       </n-message-provider>
     </n-dialog-provider>
   </n-config-provider>
 </template>
+
+<style scoped>
+.admin-nav {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.admin-nav__item {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.admin-nav__item.router-link-active {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.admin-nav__item--out {
+  margin-left: auto;
+}
+</style>
