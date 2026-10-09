@@ -6,7 +6,15 @@
  * 规则会在详情页用 `@put` 存变量、在目录页用 `@get` 取 —— 丢掉 `variables`
  * 这类源就会静默读到空目录，而且看着像「这本书没有章节」。
  */
-import { CloudDownloadOutline, SearchOutline, SwapHorizontalOutline } from "@vicons/ionicons5";
+import {
+  ChevronForwardOutline,
+  CloudDownloadOutline,
+  GlobeOutline,
+  ListOutline,
+  SearchOutline,
+  SwapHorizontalOutline,
+  TimeOutline,
+} from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -248,6 +256,12 @@ async function clearCache() {
   }
 }
 
+const tocAnchor = ref<HTMLElement | null>(null);
+
+function scrollToToc() {
+  tocAnchor.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function read(chapter: Chapter) {
   router.push({
     name: "read",
@@ -279,36 +293,56 @@ onMounted(loadInfo);
     </n-result>
 
     <template v-else-if="info">
+      <!-- 封面虚化背景 + 底部弧形遮罩。这是原版详情页的标志性视觉
+           （activity_book_info.xml 的 bg_book / vw_bg / arc_view）：封面本身
+           就是背景，所以每本书的详情页都带着自己的主色调。 -->
       <section class="hero">
-        <BookCover :src="info.cover_url" :name="info.name" :width="96" :height="132" />
-        <div class="hero__body">
-          <h2 class="hero__title">{{ info.name }}</h2>
-          <p class="hero__meta">{{ info.author || "未知作者" }}</p>
-          <p v-if="info.kind || info.word_count" class="hero__meta">
-            <span v-if="info.kind">{{ info.kind }}</span>
-            <span v-if="info.word_count">{{ info.word_count }}</span>
-          </p>
-          <p class="hero__source">来源：{{ info.source_name || "未知" }}</p>
+        <div
+          v-if="info.cover_url"
+          class="hero__bg"
+          :style="{ backgroundImage: `url(${info.cover_url})` }"
+          aria-hidden="true"
+        />
+        <div class="hero__veil" aria-hidden="true" />
+        <div class="hero__arc" aria-hidden="true" />
+
+        <div class="hero__main">
+          <BookCover :src="info.cover_url" :name="info.name" :width="104" :height="142" />
+          <div class="hero__body">
+            <h2 class="hero__title">{{ info.name }}</h2>
+            <p class="hero__author">{{ info.author || "未知作者" }}</p>
+            <p v-if="info.kind || info.word_count" class="hero__tags">
+              <n-tag v-if="info.kind" size="tiny" :bordered="false">{{ info.kind }}</n-tag>
+              <n-tag v-if="info.word_count" size="tiny" :bordered="false">
+                {{ info.word_count }}
+              </n-tag>
+            </p>
+          </div>
         </div>
       </section>
 
-      <div class="actions">
-        <n-button v-if="!onShelf" type="primary" block @click="addToShelf">加入书架</n-button>
-        <template v-else>
-          <n-button
-            type="primary"
-            block
-            :disabled="!chapters.length"
-            @click="read(chapters[Math.max(0, currentIndex)] ?? chapters[0])"
-          >
-            {{ currentIndex >= 0 ? `续读第 ${currentIndex + 1} 章` : "开始阅读" }}
+      <!-- 来源与最新章节各自成行并带图标（对齐原版的 tv_origin / tv_lasted） -->
+      <section class="meta">
+        <div class="meta__row">
+          <n-icon size="15"><GlobeOutline /></n-icon>
+          <span class="meta__label">来源</span>
+          <span class="meta__value">{{ info.source_name || "未知" }}</span>
+          <n-button v-if="onShelf" text size="tiny" type="primary" @click="openSources">
+            换源
           </n-button>
-          <n-popconfirm @positive-click="removeFromShelf">
-            <template #trigger><n-button quaternary>移出</n-button></template>
-            移出书架会同时删掉阅读进度，确定吗？
-          </n-popconfirm>
-        </template>
-      </div>
+        </div>
+        <div v-if="info.last_chapter" class="meta__row">
+          <n-icon size="15"><TimeOutline /></n-icon>
+          <span class="meta__label">最新</span>
+          <span class="meta__value">{{ info.last_chapter }}</span>
+        </div>
+        <div class="meta__row" @click="scrollToToc">
+          <n-icon size="15"><ListOutline /></n-icon>
+          <span class="meta__label">目录</span>
+          <span class="meta__value">{{ chapters.length ? `共 ${chapters.length} 章` : "加载中…" }}</span>
+          <n-icon size="14" class="meta__arrow"><ChevronForwardOutline /></n-icon>
+        </div>
+      </section>
 
       <section v-if="info.intro" class="intro">
         <p class="intro__text" :class="{ 'intro__text--clamped': !introExpanded }">
@@ -350,7 +384,7 @@ onMounted(loadInfo);
         </div>
       </section>
 
-      <section class="toc">
+      <section ref="tocAnchor" class="toc">
         <div class="toc__head">
           <span>目录 {{ chapters.length ? `(${chapters.length})` : "" }}</span>
           <n-button text size="tiny" @click="reversed = !reversed">
@@ -393,6 +427,26 @@ onMounted(loadInfo);
       </section>
     </template>
 
+    <!-- 底部固定操作栏。原版是 fl_action 里的 tv_shelf | tv_read ——
+         固定住的好处是不管滚到哪都能直接开始读，不必回到顶部。 -->
+    <div v-if="info && !loading && !error" class="dock">
+      <n-button v-if="!onShelf" quaternary class="dock__side" @click="addToShelf">
+        加入书架
+      </n-button>
+      <n-popconfirm v-else @positive-click="removeFromShelf">
+        <template #trigger><n-button quaternary class="dock__side">移出书架</n-button></template>
+        移出书架会同时删掉阅读进度，确定吗？
+      </n-popconfirm>
+      <n-button
+        type="primary"
+        class="dock__main"
+        :disabled="!chapters.length"
+        @click="read(chapters[Math.max(0, currentIndex)] ?? chapters[0])"
+      >
+        {{ currentIndex >= 0 ? `续读第 ${currentIndex + 1} 章` : "开始阅读" }}
+      </n-button>
+    </div>
+
     <SwitchSourceDrawer
       v-model:show="showSources"
       :page="switchPage"
@@ -410,41 +464,127 @@ onMounted(loadInfo);
 }
 
 .hero {
+  position: relative;
+  padding: var(--space-5) var(--space-3) var(--space-6);
+  overflow: hidden;
+}
+
+.hero__bg {
+  position: absolute;
+  /* 向外扩一圈：blur 会让边缘透出底色，不扩的话四边有一圈亮边 */
+  inset: -24px;
+  background-position: center;
+  background-size: cover;
+  filter: blur(26px) saturate(1.3);
+  transform: scale(1.1);
+}
+
+.hero__veil {
+  position: absolute;
+  inset: 0;
+  /* 盖一层才能保证文字可读 —— 封面可能是任何颜色和明度 */
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--surface-sunken) 72%, transparent),
+    color-mix(in srgb, var(--surface-sunken) 94%, transparent)
+  );
+}
+
+.hero__arc {
+  position: absolute;
+  inset-inline: -10%;
+  bottom: -28px;
+  height: 56px;
+  background: var(--bg-canvas);
+  /* 原版 arc_view 的弧形：底部用一个椭圆切出弧线 */
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+}
+
+.hero__main {
+  position: relative;
   display: flex;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-3);
+  align-items: flex-end;
 }
 
 .hero__body {
   min-width: 0;
   flex: 1;
+  padding-bottom: var(--space-2);
 }
 
 .hero__title {
   margin: 0 0 6px;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.3;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
-.hero__meta {
-  display: flex;
-  gap: var(--space-3);
-  margin: 0 0 4px;
+.hero__author {
+  margin: 0 0 var(--space-2);
   font-size: 13px;
   color: var(--text-muted);
 }
 
-.hero__source {
-  margin: var(--space-2) 0 0;
-  font-size: 12px;
-  color: var(--accent);
+.hero__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
 }
 
-.actions {
+.meta {
+  padding: 0 var(--space-3);
+}
+
+.meta__row {
   display: flex;
   gap: var(--space-2);
-  padding: 0 var(--space-3) var(--space-3);
+  align-items: center;
+  min-height: 42px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.meta__label {
+  flex-shrink: 0;
+  width: 2.6em;
+}
+
+.meta__value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: inherit;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.meta__arrow {
+  flex-shrink: 0;
+}
+
+/* 底部固定操作栏 */
+.dock {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border-subtle);
+  backdrop-filter: blur(12px);
+}
+
+.dock__side {
+  flex-shrink: 0;
+}
+
+.dock__main {
+  flex: 1;
 }
 
 .intro,
@@ -499,6 +639,11 @@ onMounted(loadInfo);
 
 .toc__filter {
   margin-bottom: var(--space-2);
+}
+
+/* 给底部固定操作栏让位，否则目录最后几行被挡住 */
+.toc {
+  padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
 }
 
 .source {

@@ -41,7 +41,10 @@ watch(() => props.src, () => (failed.value = false));
   justify-content: center;
   overflow: hidden;
   background: var(--surface-sunken);
-  border-radius: 6px;
+  /* 原版用 CardView 包封面（item_bookshelf_grid.xml 的 cv_content），
+     所以有圆角和一点投影 —— 封面因此从背景里「浮」出来 */
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
 }
 
 .cover img {

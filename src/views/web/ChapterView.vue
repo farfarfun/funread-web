@@ -15,11 +15,6 @@
 import {
   ChevronBackOutline,
   ChevronForwardOutline,
-  ListOutline,
-  PauseOutline,
-  SettingsOutline,
-  SwapHorizontalOutline,
-  VolumeHighOutline,
 } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -36,6 +31,7 @@ import type {
   SwitchSourceResult,
 } from "../../api/types";
 import ChapterList from "../../components/web/ChapterList.vue";
+import ReaderMenu from "../../components/web/ReaderMenu.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import { useAutoScroll } from "../../composables/useAutoScroll";
@@ -75,6 +71,23 @@ const showSettings = ref(false);
 const showSources = ref(false);
 const sourcesLoading = ref(false);
 const chapterFilter = ref("");
+
+/**
+ * 亮度。0-100，100 = 不压暗。
+ *
+ * Web 没有屏幕亮度 API，所以这是一层半透明黑色遮罩 —— **只能压暗不能调亮**。
+ * 夜里读书时「再暗一点」是真实需求（系统最低亮度仍然刺眼），所以值得做；
+ * 但界面上必须说明这个限制，否则用户会拖到 100 以为能更亮。
+ */
+const BRIGHTNESS_KEY = "funread.reader.brightness";
+const brightness = ref(Number(localStorage.getItem(BRIGHTNESS_KEY)) || 100);
+watch(brightness, (value) => {
+  try {
+    localStorage.setItem(BRIGHTNESS_KEY, String(value));
+  } catch {
+    //  隐私模式写不了，本次会话内仍生效
+  }
+});
 
 const scroller = ref<HTMLElement | null>(null);
 const autoScroll = useAutoScroll(scroller);
@@ -262,6 +275,13 @@ async function go(delta: number) {
     params: { bookKey: bookKey.value },
     query: { ...route.query, chapter: String(index.value) },
   });
+}
+
+/** 全书进度滑块的落点。滑块给的是目标下标，换算成 delta 复用 go()。 */
+async function jumpTo(target: number) {
+  const clamped = Math.min(Math.max(0, target), Math.max(0, chapters.value.length - 1));
+  if (clamped === index.value) return;
+  await go(clamped - index.value);
 }
 
 async function pick(chapter: Chapter) {
@@ -518,39 +538,26 @@ watch(() => settings.value.theme, () => undefined);
       </button>
     </template>
 
-    <Transition name="slide-up">
-      <div v-if="showToolbar" class="toolbar" @click.stop>
-        <n-button quaternary :disabled="!hasPrev" aria-label="上一章" @click="go(-1)">
-          <template #icon><n-icon><ChevronBackOutline /></n-icon></template>
-        </n-button>
-        <n-button quaternary aria-label="目录" @click="showToc = true">
-          <template #icon><n-icon><ListOutline /></n-icon></template>
-        </n-button>
-        <n-button
-          v-if="speech.supported"
-          quaternary
-          :type="speech.speaking.value ? 'primary' : 'default'"
-          :aria-label="speech.speaking.value ? '停止朗读' : '朗读'"
-          @click="toggleSpeech"
-        >
-          <template #icon>
-            <n-icon>
-              <PauseOutline v-if="speech.speaking.value" />
-              <VolumeHighOutline v-else />
-            </n-icon>
-          </template>
-        </n-button>
-        <n-button quaternary aria-label="阅读设置" @click="showSettings = true">
-          <template #icon><n-icon><SettingsOutline /></n-icon></template>
-        </n-button>
-        <n-button quaternary aria-label="换源" @click="openSources">
-          <template #icon><n-icon><SwapHorizontalOutline /></n-icon></template>
-        </n-button>
-        <n-button quaternary :disabled="!hasNext" aria-label="下一章" @click="go(1)">
-          <template #icon><n-icon><ChevronForwardOutline /></n-icon></template>
-        </n-button>
-      </div>
-    </Transition>
+    <ReaderMenu
+      v-model:show="showToolbar"
+      v-model:brightness="brightness"
+      :chapter-name="content?.title || current?.name || ''"
+      :source-name="info?.source_name || ''"
+      :index="index"
+      :total="chapters.length"
+      :has-prev="hasPrev"
+      :has-next="hasNext"
+      :speech-supported="speech.supported"
+      :speaking="speech.speaking.value"
+      @prev="go(-1)"
+      @next="go(1)"
+      @jump="jumpTo"
+      @toc="showToc = true"
+      @speech="toggleSpeech"
+      @style="showSettings = true"
+      @settings="showSettings = true"
+      @switch-source="openSources"
+    />
 
     <n-drawer v-model:show="showToc" placement="bottom" :height="440">
       <n-drawer-content title="目录" closable>
@@ -653,19 +660,6 @@ watch(() => settings.value.theme, () => undefined);
   justify-content: center;
   padding: var(--space-5) 0 var(--space-6);
   font-size: 0.75em;
-}
-
-.toolbar {
-  position: fixed;
-  inset-inline: 0;
-  bottom: 0;
-  z-index: 30;
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-  background: var(--surface-raised);
-  border-top: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
 }
 
 /* 桌面常驻翻章按钮：贴在内容两侧的空白里，不压正文 */

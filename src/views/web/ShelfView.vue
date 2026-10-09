@@ -1,6 +1,13 @@
 <script setup lang="ts">
 /** 书架（C 端首页）。网格 / 列表两种视图，排序纯前端做，不加接口。 */
-import { GridOutline, ListOutline, SearchOutline } from "@vicons/ionicons5";
+import {
+  BookmarkOutline,
+  GridOutline,
+  ListOutline,
+  PersonOutline,
+  SearchOutline,
+  TimeOutline,
+} from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, onActivated, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -162,17 +169,29 @@ onActivated(load);
 
       <n-list v-else hoverable clickable>
         <n-list-item v-for="book in sorted" :key="book.book_key">
+          <!-- 结构对齐 CCSSNE 的 item_bookshelf_list.xml：封面 66×90、书名 16sp、
+               三行带图标的信息（作者 / 读到哪 / 最新章节），都是 13sp -->
           <div class="row" @click="open(book)">
-            <BookCover :src="book.cover_url" :name="book.name" :width="48" :height="66" />
+            <BookCover :src="book.cover_url" :name="book.name" :width="66" :height="90" />
             <div class="row__body">
               <p class="row__name">{{ book.name }}</p>
-              <p class="row__meta">{{ book.author || "未知作者" }}</p>
-              <p class="row__progress">
-                {{
-                  book.progress
-                    ? `读到第 ${book.progress.chapter_index + 1} 章${book.progress.chapter_name ? ` · ${book.progress.chapter_name}` : ""}`
-                    : "未开始"
-                }}
+              <p class="row__line">
+                <n-icon size="13"><PersonOutline /></n-icon>
+                <span>{{ book.author || "未知作者" }}</span>
+              </p>
+              <p class="row__line row__line--read">
+                <n-icon size="13"><BookmarkOutline /></n-icon>
+                <span>
+                  {{
+                    book.progress
+                      ? `读到第 ${book.progress.chapter_index + 1} 章${book.progress.chapter_name ? ` · ${book.progress.chapter_name}` : ""}`
+                      : "未开始"
+                  }}
+                </span>
+              </p>
+              <p v-if="book.last_chapter" class="row__line">
+                <n-icon size="13"><TimeOutline /></n-icon>
+                <span>{{ book.last_chapter }}</span>
               </p>
             </div>
           </div>
@@ -237,7 +256,8 @@ onActivated(load);
 
 .grid__name {
   overflow: hidden;
-  font-size: 13px;
+  /* 12px 对齐原版的 12sp */
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
   white-space: nowrap;
@@ -267,22 +287,32 @@ onActivated(load);
 }
 
 .row__name {
-  margin: 0 0 2px;
+  margin: 0;
   overflow: hidden;
-  font-size: 14px;
+  /* 16px 对齐原版的 16sp —— 书名是这一行的主体，比信息行明显大一级 */
+  font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.row__meta,
-.row__progress {
-  margin: 0;
-  font-size: 12px;
+.row__line {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-size: 13px;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.row__progress {
+.row__line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row__line--read {
   color: var(--accent);
 }
 
