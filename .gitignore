@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .env.local
 .run/
+# funbuild/funshell 把自己的日志写在仓库根的 logs/ 下, 不是我们的运行时目录,
+# 所以 .run/ 挡不住它 —— 发版时这些 .log.gz 会被 push 顺手提交进来。
+logs/
