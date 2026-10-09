@@ -11,9 +11,9 @@ import type { DropdownOption } from "naive-ui";
 import { useDialog, useMessage } from "naive-ui";
 import { computed, onMounted, ref, watch } from "vue";
 
-import { api } from "../api/client";
-import type { Source, SourceType } from "../api/types";
-import { formatTime, fromNow, SOURCE_TYPE_LABEL } from "../utils/display";
+import { api } from "../../api/client";
+import type { Source, SourceType } from "../../api/types";
+import { formatTime, fromNow, SOURCE_TYPE_LABEL } from "../../utils/display";
 
 defineProps<{ dark: boolean }>();
 defineEmits<{ toggleTheme: [] }>();

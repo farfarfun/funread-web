@@ -42,7 +42,8 @@ body {
 }
 
 #app {
-  min-height: 100vh;
+  /* dvh 而非 vh：移动浏览器的地址栏会伸缩，100vh 会让底部被截掉一截 */
+  min-height: 100dvh;
 }
 
 :where(a, button, [tabindex]):focus-visible {

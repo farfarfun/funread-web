@@ -1,0 +1,53 @@
+/**
+ * C 端用到的语义色变量。
+ *
+ * 和 `tokens.css` 的分工：那边是间距、缓动、焦点环这类与主题无关的量；这里是
+ * 跟着明暗主题翻转的表面色与文字色。都用 CSS 变量而不是 Naive UI 的 theme
+ * 变量，因为自写组件（TabBar、ArticleCard…）不走 Naive 的 provider 链。
+ */
+
+:root {
+  --surface-raised: rgba(255, 255, 255, 0.86);
+  --surface-sunken: #e6e7eb;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --text-muted: #6b6d73;
+  --accent: #6d5ef8;
+}
+
+:root.dark {
+  --surface-raised: rgba(24, 25, 30, 0.86);
+  --surface-sunken: #1c1d23;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --text-muted: #8b8d95;
+  --accent: #8b7ffa;
+}
+
+/* 屏幕阅读器可见、视觉上隐藏。加载态的 aria-live 文案用它。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * 整条链都禁用横向滚动：移动端最常见的布局 bug 就是某个元素撑破视口，
+ * 导致整页能左右拖动。宁可让个别元素内部滚（表格、分类条已单独处理）。
+ */
+html,
+body {
+  overflow-x: hidden;
+}
+
+/* iOS 上 input 字号小于 16px 会触发自动放大，把整个布局顶歪 */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
