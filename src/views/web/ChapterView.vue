@@ -29,11 +29,13 @@ import type {
   Chapter,
   ChapterContent,
   ShelfBook,
-  SourceRef,
+  SwitchCandidate,
+  SwitchSourcePage,
   SwitchSourceResult,
 } from "../../api/types";
 import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
+import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 
 /** 进度回写间隔。短了打库太频，长了切走会丢进度。 */
@@ -53,7 +55,8 @@ const chapters = ref<Chapter[]>([]);
 const shelfBook = ref<ShelfBook | null>(null);
 const content = ref<ChapterContent | null>(null);
 const cachedIndexes = ref<number[]>([]);
-const sources = ref<SourceRef[]>([]);
+const switchPage = ref<SwitchSourcePage | null>(null);
+const switchError = ref("");
 
 const index = ref(0);
 const urlId = ref(0);
@@ -63,6 +66,7 @@ const showToolbar = ref(false);
 const showToc = ref(false);
 const showSettings = ref(false);
 const showSources = ref(false);
+const sourcesLoading = ref(false);
 const chapterFilter = ref("");
 
 const scroller = ref<HTMLElement | null>(null);
@@ -251,15 +255,24 @@ function onTap(event: MouseEvent) {
 
 async function openSources() {
   showSources.value = true;
-  if (sources.value.length) return;
+  //  每次都重搜。这是实时聚合搜索而不是查库 —— 缓存住上一次的结果就等于
+  //  「源挂了之后换源列表还是那批挂掉的源」，恰好在最需要它的时候没用。
+  await loadSources();
+}
+
+async function loadSources() {
+  sourcesLoading.value = true;
+  switchError.value = "";
   try {
-    sources.value = await api.sourcesFor(bookKey.value);
+    switchPage.value = await api.sourcesFor(bookKey.value);
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : "换源列表加载失败");
+    switchError.value = reason instanceof Error ? reason.message : "换源列表加载失败";
+  } finally {
+    sourcesLoading.value = false;
   }
 }
 
-async function switchTo(source: SourceRef) {
+async function switchTo(source: SwitchCandidate) {
   try {
     //  换源前把当前进度落下去 —— 后端要靠它（章节名 + 序号）在新源的目录里
     //  重新定位，这一步丢了就只能从第一章开始。
@@ -323,7 +336,7 @@ async function reloadFromNewSource(targetIndex: number) {
     //  换源清掉了章节缓存，已下载标记要跟着清
     cachedIndexes.value = [];
     //  换源后来源列表也变了（当前源不同），下次打开重新拉
-    sources.value = [];
+    switchPage.value = null;
     if (scroller.value) scroller.value.scrollTop = 0;
     await loadChapter(0);
   } catch (reason) {
@@ -433,16 +446,14 @@ watch(() => settings.value.theme, () => undefined);
 
     <ReaderSettingsSheet v-model:show="showSettings" />
 
-    <n-drawer v-model:show="showSources" placement="bottom" :height="340">
-      <n-drawer-content title="换源" closable>
-        <n-empty v-if="!sources.length" description="没有找到其他来源" />
-        <n-list v-else hoverable clickable>
-          <n-list-item v-for="source in sources" :key="source.url_id" @click="switchTo(source)">
-            {{ source.source_name || `源 ${source.url_id}` }}
-          </n-list-item>
-        </n-list>
-      </n-drawer-content>
-    </n-drawer>
+    <SwitchSourceDrawer
+      v-model:show="showSources"
+      :page="switchPage"
+      :loading="sourcesLoading"
+      :error="switchError"
+      @pick="switchTo"
+      @reload="loadSources"
+    />
   </div>
 </template>
 

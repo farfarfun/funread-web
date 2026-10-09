@@ -17,12 +17,14 @@ import type {
   Chapter,
   DownloadProgress,
   ShelfBook,
-  SourceRef,
+  SwitchCandidate,
+  SwitchSourcePage,
   SwitchSourceResult,
 } from "../../api/types";
 import BookCover from "../../components/web/BookCover.vue";
 import ChapterList from "../../components/web/ChapterList.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
+import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import TopBar from "../../components/web/TopBar.vue";
 
 /** 一次下载的章节上限，和后端的 MAX_DOWNLOAD_CHAPTERS 对齐。 */
@@ -38,7 +40,8 @@ const bookKey = computed(() => String(route.params.bookKey));
 const info = ref<BookInfo | null>(null);
 const chapters = ref<Chapter[]>([]);
 const shelfBook = ref<ShelfBook | null>(null);
-const sources = ref<SourceRef[]>([]);
+const switchPage = ref<SwitchSourcePage | null>(null);
+const switchError = ref("");
 const cachedIndexes = ref<number[]>([]);
 const downloading = ref<DownloadProgress | null>(null);
 
@@ -159,18 +162,24 @@ async function removeFromShelf() {
 
 async function openSources() {
   showSources.value = true;
-  if (sources.value.length) return;
+  //  每次都重搜。这是实时聚合搜索而不是查库 —— 缓存住上一次的结果就等于
+  //  「源挂了之后换源列表还是那批挂掉的源」，恰好在最需要它的时候没用。
+  await loadSources();
+}
+
+async function loadSources() {
   sourcesLoading.value = true;
+  switchError.value = "";
   try {
-    sources.value = await api.sourcesFor(bookKey.value);
+    switchPage.value = await api.sourcesFor(bookKey.value);
   } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : "换源列表加载失败");
+    switchError.value = reason instanceof Error ? reason.message : "换源列表加载失败";
   } finally {
     sourcesLoading.value = false;
   }
 }
 
-async function switchTo(source: SourceRef) {
+async function switchTo(source: SwitchCandidate) {
   try {
     const result = await api.switchSource(bookKey.value, source.url_id, source.book_url);
     showSources.value = false;
@@ -384,21 +393,14 @@ onMounted(loadInfo);
       </section>
     </template>
 
-    <n-drawer v-model:show="showSources" placement="bottom" :height="360">
-      <n-drawer-content title="换源" closable>
-        <n-spin :show="sourcesLoading">
-          <n-empty v-if="!sources.length && !sourcesLoading" description="没有找到其他来源" />
-          <n-list v-else hoverable clickable>
-            <n-list-item v-for="source in sources" :key="source.url_id" @click="switchTo(source)">
-              <div class="source">
-                <span class="source__name">{{ source.source_name || `源 ${source.url_id}` }}</span>
-                <span v-if="source.url_id === urlId" class="source__current">当前</span>
-              </div>
-            </n-list-item>
-          </n-list>
-        </n-spin>
-      </n-drawer-content>
-    </n-drawer>
+    <SwitchSourceDrawer
+      v-model:show="showSources"
+      :page="switchPage"
+      :loading="sourcesLoading"
+      :error="switchError"
+      @pick="switchTo"
+      @reload="loadSources"
+    />
   </div>
 </template>
 

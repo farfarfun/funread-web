@@ -21,6 +21,8 @@ import type {
   SourceRef,
   SourceType,
   Subscription,
+  SwitchCandidate,
+  SwitchSourcePage,
   SwitchSourceResult,
   TocOut,
 } from "./types";
@@ -109,8 +111,10 @@ export const api = {
     book?: BookInfo | null;
     book_key?: string;
   }) => request<ChapterContent>("/reader/content", { method: "POST", ...json(payload) }),
-  sourcesFor: (book_key: string) =>
-    request<SourceRef[]>("/reader/sources", { params: { book_key } }),
+  //  这是一次**实时聚合搜索**，不是查库 —— 书架只记了当前在读的源。所以它慢
+    //  （可能十几秒），而且返回搜索统计让界面能解释空列表。
+    sourcesFor: (book_key: string) =>
+    request<SwitchSourcePage>("/reader/sources", { params: { book_key } }),
   scan: (source_type: SourceType = "book", limit?: number) =>
     request<ScanReport>("/reader/scan", { method: "POST", params: { source_type, limit } }),
 

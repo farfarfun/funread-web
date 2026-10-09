@@ -81,16 +81,51 @@ export interface SearchBook {
   sources: SourceRef[];
 }
 
-export interface SearchPage {
+/**
+ * 一轮 fan-out 的统计。
+ *
+ * 没有这组数字时，「搜不到」和「试的源全挂了」在界面上长得一模一样。书源池有
+ * 5,606 个可用源而实跑可用率只有个位数百分比，所以「试了 24 个、2 个答了」
+ * 是常态，界面必须能把这件事说出来。
+ */
+export interface SearchStats {
+  sources_tried: number;
+  sources_ok: number;
+  /** 答出了结果的源数。搜索攒够这个数就停。 */
+  hits: number;
+  /** 需要 JS 而被跳过的源数。结构性不支持，换关键词也没用。 */
+  js_skipped: number;
+  failed: number;
+  /** 搜了几波并发。 */
+  waves: number;
+  elapsed: number;
+  /** 候选池真的搜完了。只有此时「没搜到」才是确定的结论。 */
+  exhausted: boolean;
+  stopped_by: "enough" | "budget" | "max_sources" | "exhausted" | "empty";
+}
+
+export interface SearchPage extends SearchStats {
   items: SearchBook[];
   total: number;
   limit: number;
   offset: number;
-  sources_tried: number;
-  sources_ok: number;
-  /** 需要 JS 而被跳过的源数。结构性不支持，换关键词也没用。 */
-  js_skipped: number;
-  failed: number;
+}
+
+/** 换源列表里的一项：一个源 + 这本书在该源下的样子。 */
+export interface SwitchCandidate extends SourceRef {
+  name: string;
+  author: string;
+  last_chapter: string;
+  /** 书名与作者都对得上。为 false 的**不该藏起来** —— 作者名写法差异很常见。 */
+  exact: boolean;
+  current: boolean;
+}
+
+export interface SwitchSourcePage extends SearchStats {
+  items: SwitchCandidate[];
+  total: number;
+  book_key: string;
+  name: string;
 }
 
 /**
