@@ -1,17 +1,36 @@
 {
   "name": "funread-web",
-  "private": true,
   "version": "0.0.5",
+  "description": "funread 前端服务：/admin 采集源管理端与 /web 阅读端，运行时反代 /api 到 funread-api",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/farfarfun/funread-web.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "funread-web": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "server",
+    "dist"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "serve": "node bin/cli.js server run",
+    "test": "node --test \"tests/*.test.js\""
   },
   "dependencies": {
     "@vicons/ionicons5": "^0.13.0",
     "naive-ui": "^2.45.2",
-    "vue": "^3.4.0"
+    "vue": "^3.4.0",
+    "vue-router": "^4.4.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
