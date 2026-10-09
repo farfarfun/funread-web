@@ -12,7 +12,14 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
-import type { BookInfo, Chapter, DownloadProgress, ShelfBook, SourceRef } from "../../api/types";
+import type {
+  BookInfo,
+  Chapter,
+  DownloadProgress,
+  ShelfBook,
+  SourceRef,
+  SwitchSourceResult,
+} from "../../api/types";
 import BookCover from "../../components/web/BookCover.vue";
 import ChapterList from "../../components/web/ChapterList.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
@@ -52,6 +59,24 @@ const urlId = computed(() => {
   if (Number.isFinite(fromQuery) && fromQuery > 0) return fromQuery;
   return shelfBook.value?.url_id ?? 0;
 });
+
+/** 换源结果的中文说明。方式不同，用户要做的事不同。 */
+function describeSwitch(result: SwitchSourceResult, sourceName: string): string {
+  const where = sourceName ? `「${sourceName}」` : "新源";
+  const position = `第 ${result.chapter_index + 1} / ${result.total} 章`;
+  switch (result.method) {
+    case "exact":
+      return `已切换到${where}，定位到${position}`;
+    case "normalized":
+      return `已切换到${where}，按章节名定位到${position}`;
+    case "position":
+      return `已切换到${where}，按位置估到${position}，可能有偏差`;
+    case "none":
+      return `已切换到${where}，但没取到目录，请手动选章`;
+    default:
+      return `已切换到${where}`;
+  }
+}
 
 const onShelf = computed(() => shelfBook.value !== null);
 const currentIndex = computed(() => shelfBook.value?.progress?.chapter_index ?? -1);
@@ -147,9 +172,11 @@ async function openSources() {
 
 async function switchTo(source: SourceRef) {
   try {
-    await api.switchSource(bookKey.value, source.url_id, source.book_url);
+    const result = await api.switchSource(bookKey.value, source.url_id, source.book_url);
     showSources.value = false;
-    message.success(`已切换到「${source.source_name}」`);
+    const text = describeSwitch(result, source.source_name);
+    if (result.method === "none" || result.is_approximate) message.warning(text);
+    else message.success(text);
     //  换源后目录序号会变，必须整条链重算，不能只换个 url_id
     await router.replace({
       name: "book",

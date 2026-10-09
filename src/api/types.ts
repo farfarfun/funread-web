@@ -159,6 +159,23 @@ export interface ShelfBook {
   progress: Progress | null;
 }
 
+/**
+ * 换源后进度落在哪一章。
+ *
+ * `method` 决定界面该怎么说：
+ * - `exact` / `normalized` —— 按章节名定位到了，可以直接接着读；
+ * - `position` —— 按比例估的，**必然不准**，要提示用户确认；
+ * - `none` —— 新源的目录取不到，进度没动，要手动选章；
+ * - `skipped` —— 本来就没有进度可搬。
+ */
+export interface SwitchSourceResult {
+  method: "exact" | "normalized" | "position" | "none" | "skipped";
+  chapter_index: number;
+  chapter_name: string;
+  total: number;
+  is_approximate: boolean;
+}
+
 export interface DownloadProgress {
   task_id: string;
   state: "running" | "done" | "error";

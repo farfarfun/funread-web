@@ -21,6 +21,7 @@ import type {
   SourceRef,
   SourceType,
   Subscription,
+  SwitchSourceResult,
   TocOut,
 } from "./types";
 
@@ -128,8 +129,13 @@ export const api = {
       char_offset?: number;
     },
   ) => request<void>(`/shelf/${book_key}/progress`, { method: "PUT", ...json(payload) }),
-  switchSource: (book_key: string, url_id: number, book_url: string) =>
-    request<void>(`/shelf/${book_key}/source`, { method: "POST", ...json({ url_id, book_url }) }),
+  //  返回进度被重新定位到了哪一章，以及定位方式 —— 界面要据此决定是「接着读」
+  //  还是「提示可能有偏差」。
+  switchSource: (book_key: string, url_id: number, book_url: string, remap_progress = true) =>
+    request<SwitchSourceResult>(`/shelf/${book_key}/source`, {
+      method: "POST",
+      ...json({ url_id, book_url, remap_progress }),
+    }),
   download: (book_key: string, url_id: number, chapters: Chapter[], interval = 0.5) =>
     request<DownloadAccepted>(`/shelf/${book_key}/download`, {
       method: "POST",

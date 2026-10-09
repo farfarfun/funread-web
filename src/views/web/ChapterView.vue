@@ -24,7 +24,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
-import type { BookInfo, Chapter, ChapterContent, ShelfBook, SourceRef } from "../../api/types";
+import type {
+  BookInfo,
+  Chapter,
+  ChapterContent,
+  ShelfBook,
+  SourceRef,
+  SwitchSourceResult,
+} from "../../api/types";
 import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
@@ -61,6 +68,24 @@ const chapterFilter = ref("");
 const scroller = ref<HTMLElement | null>(null);
 let saveTimer: number | undefined;
 let pendingOffset = 0;
+
+/** 换源结果的中文说明。方式不同，用户要做的事不同。 */
+function describeSwitch(result: SwitchSourceResult, sourceName: string): string {
+  const where = sourceName ? `「${sourceName}」` : "新源";
+  const position = `第 ${result.chapter_index + 1} / ${result.total} 章`;
+  switch (result.method) {
+    case "exact":
+      return `已切换到${where}，定位到${position}`;
+    case "normalized":
+      return `已切换到${where}，按章节名定位到${position}`;
+    case "position":
+      return `已切换到${where}，按位置估到${position}，可能有偏差`;
+    case "none":
+      return `已切换到${where}，但没取到目录，请手动选章`;
+    default:
+      return `已切换到${where}`;
+  }
+}
 
 const current = computed(() => chapters.value[index.value] ?? null);
 const hasPrev = computed(() => index.value > 0);
@@ -236,16 +261,75 @@ async function openSources() {
 
 async function switchTo(source: SourceRef) {
   try {
-    await api.switchSource(bookKey.value, source.url_id, source.book_url);
+    //  换源前把当前进度落下去 —— 后端要靠它（章节名 + 序号）在新源的目录里
+    //  重新定位，这一步丢了就只能从第一章开始。
+    await save(currentOffset(), { immediate: true });
+
+    const result = await api.switchSource(bookKey.value, source.url_id, source.book_url);
     showSources.value = false;
-    //  换源后章节序号不再对应，回详情页重算整条链
+
+    if (result.method === "none") {
+      //  新源的目录取不到，没法定位。源已经换了，所以回详情页让用户手动选章 ——
+      //  留在正文页只能显示一个任意章节。
+      message.warning(describeSwitch(result, source.source_name));
+      await router.replace({
+        name: "book",
+        params: { bookKey: bookKey.value },
+        query: { url_id: String(source.url_id), book_url: source.book_url },
+      });
+      return;
+    }
+
+    //  **留在正文页接着读**。这是「读到一半源挂了」这个场景的全部意义 ——
+    //  把人甩回详情页等于让他在上千章的目录里重新找自己读到哪。
+    const text = describeSwitch(result, source.source_name);
+    if (result.is_approximate) message.warning(text);
+    else message.success(text);
+
+    urlId.value = source.url_id;
+    if (shelfBook.value) {
+      shelfBook.value = {
+        ...shelfBook.value,
+        url_id: source.url_id,
+        book_url: source.book_url,
+      };
+    }
     await router.replace({
-      name: "book",
+      name: "read",
       params: { bookKey: bookKey.value },
-      query: { url_id: String(source.url_id), book_url: source.book_url },
+      query: { url_id: String(source.url_id), chapter: String(result.chapter_index) },
     });
+    //  整条链都要用新源重算：BookInfo 的 variables、目录、正文
+    await reloadFromNewSource(result.chapter_index);
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "换源失败");
+  }
+}
+
+/** 用新源重新取详情与目录，然后落在 `targetIndex` 这一章。 */
+async function reloadFromNewSource(targetIndex: number) {
+  loading.value = true;
+  error.value = "";
+  try {
+    info.value = await api.bookInfo({
+      url_id: urlId.value,
+      book_url: shelfBook.value?.book_url ?? "",
+      name: shelfBook.value?.name ?? "",
+      author: shelfBook.value?.author ?? "",
+    });
+    const toc = await api.toc(urlId.value, info.value);
+    chapters.value = toc.items;
+    index.value = Math.min(Math.max(0, targetIndex), Math.max(0, chapters.value.length - 1));
+    //  换源清掉了章节缓存，已下载标记要跟着清
+    cachedIndexes.value = [];
+    //  换源后来源列表也变了（当前源不同），下次打开重新拉
+    sources.value = [];
+    if (scroller.value) scroller.value.scrollTop = 0;
+    await loadChapter(0);
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : "新源的目录读不出来";
+  } finally {
+    loading.value = false;
   }
 }
 
