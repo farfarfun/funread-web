@@ -16,8 +16,10 @@ import {
   ChevronBackOutline,
   ChevronForwardOutline,
   ListOutline,
+  PauseOutline,
   SettingsOutline,
   SwapHorizontalOutline,
+  VolumeHighOutline,
 } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -36,8 +38,10 @@ import type {
 import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
+import { useAutoScroll } from "../../composables/useAutoScroll";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 import { useShortcuts } from "../../composables/useShortcuts";
+import { useSpeech } from "../../composables/useSpeech";
 import { useViewport } from "../../composables/useViewport";
 
 /** 进度回写间隔。短了打库太频，长了切走会丢进度。 */
@@ -48,7 +52,7 @@ const EDGE_RATIO = 0.25;
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
-const { settings, colors, contentStyle } = useReaderSettings();
+const { settings, colors, contentStyle, paragraphStyle } = useReaderSettings();
 const { isTouch, isWide } = useViewport();
 
 const bookKey = computed(() => String(route.params.bookKey));
@@ -73,6 +77,8 @@ const sourcesLoading = ref(false);
 const chapterFilter = ref("");
 
 const scroller = ref<HTMLElement | null>(null);
+const autoScroll = useAutoScroll(scroller);
+const speech = useSpeech();
 let saveTimer: number | undefined;
 let pendingOffset = 0;
 
@@ -218,9 +224,33 @@ function onScroll() {
   }, SAVE_THROTTLE_MS);
 }
 
+/**
+ * 朗读开关。
+ *
+ * **必须由用户点击直接触发** —— 浏览器的自动播放策略会拦掉非手势触发的 speak()，
+ * 所以没有「打开章节自动朗读」这个选项。
+ */
+function toggleSpeech() {
+  if (speech.speaking.value) {
+    speech.stop();
+    return;
+  }
+  if (!paragraphs.value.length) {
+    message.info("这一章还没有正文");
+    return;
+  }
+  if (!speech.start(paragraphs.value)) {
+    message.error("朗读启动失败，可能是这台设备没有可用语音");
+  }
+}
+
 async function go(delta: number) {
   const next = index.value + delta;
   if (next < 0 || next >= chapters.value.length) return;
+  //  切章要把朗读与自动滚停掉 —— 否则会继续读上一章的内容，或者在新章首页
+  //  自己往下滚，两者都看不出原因
+  speech.stop();
+  autoScroll.stop();
   //  切章前把当前进度落下去，否则这一章读到哪就丢了
   await save(currentOffset(), { immediate: true });
   index.value = next;
@@ -376,6 +406,8 @@ function onVisibility() {
 
 onBeforeUnmount(() => {
   flush();
+  //  朗读是全局的（speechSynthesis 不属于组件），不停掉会在离开页面后继续读
+  speech.stop();
   if (saveTimer) window.clearTimeout(saveTimer);
   window.removeEventListener("pagehide", flush);
   document.removeEventListener("visibilitychange", onVisibility);
@@ -395,6 +427,8 @@ useShortcuts({
   t: () => (showToc.value = !showToc.value),
   s: () => (showSettings.value = !showSettings.value),
   h: () => (showSources.value ? undefined : openSources()),
+  p: () => toggleSpeech(),
+  a: () => autoScroll.toggle(settings.value.autoScrollSpeed || 40),
   Escape: () => {
     if (showToc.value || showSettings.value || showSources.value) {
       showToc.value = false;
@@ -444,7 +478,15 @@ watch(() => settings.value.theme, () => undefined);
 
       <article v-else class="reader__body" :style="contentStyle">
         <h2 class="reader__title">{{ content?.title || current?.name }}</h2>
-        <p v-for="(line, position) in paragraphs" :key="position" class="reader__p">{{ line }}</p>
+        <p
+          v-for="(line, position) in paragraphs"
+          :key="position"
+          class="reader__p"
+          :class="{ 'reader__p--speaking': speech.index.value === position }"
+          :style="paragraphStyle"
+        >
+          {{ line }}
+        </p>
         <div class="reader__footer" :style="{ color: colors.muted }">
           <n-button v-if="hasPrev" size="small" quaternary @click.stop="go(-1)">上一章</n-button>
           <span class="reader__position">{{ index + 1 }} / {{ chapters.length }}</span>
@@ -484,6 +526,20 @@ watch(() => settings.value.theme, () => undefined);
         <n-button quaternary aria-label="目录" @click="showToc = true">
           <template #icon><n-icon><ListOutline /></n-icon></template>
         </n-button>
+        <n-button
+          v-if="speech.supported"
+          quaternary
+          :type="speech.speaking.value ? 'primary' : 'default'"
+          :aria-label="speech.speaking.value ? '停止朗读' : '朗读'"
+          @click="toggleSpeech"
+        >
+          <template #icon>
+            <n-icon>
+              <PauseOutline v-if="speech.speaking.value" />
+              <VolumeHighOutline v-else />
+            </n-icon>
+          </template>
+        </n-button>
         <n-button quaternary aria-label="阅读设置" @click="showSettings = true">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
         </n-button>
@@ -509,7 +565,18 @@ watch(() => settings.value.theme, () => undefined);
       </n-drawer-content>
     </n-drawer>
 
-    <ReaderSettingsSheet v-model:show="showSettings" />
+    <ReaderSettingsSheet
+      v-model:show="showSettings"
+      :speech-supported="speech.supported"
+      :speech-voices="speech.voices.value"
+      :speech-rate="speech.rate.value"
+      :speech-voice="speech.voiceName.value"
+      :has-chinese-voice="speech.hasChineseVoice.value"
+      :auto-scroll-running="autoScroll.running.value"
+      @update:speech-rate="speech.setRate"
+      @update:speech-voice="speech.setVoice"
+      @toggle-auto-scroll="autoScroll.toggle(settings.autoScrollSpeed || 40)"
+    />
 
     <SwitchSourceDrawer
       v-model:show="showSources"
@@ -565,11 +632,18 @@ watch(() => settings.value.theme, () => undefined);
 }
 
 .reader__p {
-  margin: 0 0 1em;
+  /* margin-bottom 与 text-indent 由内联 style 给（段距与缩进可调），
+     这里只放不随设置变的部分 */
+  margin: 0;
   text-align: justify;
-  /* 中文正文首行缩进两字 */
-  text-indent: 2em;
   overflow-wrap: break-word;
+  transition: background 0.2s var(--ease);
+}
+
+/* 正在朗读的那一段。读者要能一眼找到自己听到哪了 —— 否则一分神就得重新找。 */
+.reader__p--speaking {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 4px;
 }
 
 .reader__footer {
