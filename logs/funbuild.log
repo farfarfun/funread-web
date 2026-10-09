@@ -1,4 +1,3 @@
-2026-09-17 01:04:00.455 |INFO    | funbuild.core.base : base: 187 | funbuild | - funread-web build
-2026-09-17 01:04:00.457 |INFO    | funbuild.core.base : base: 128 | funbuild | - funread-web pull
-2026-09-17 01:04:00.897 |INFO    | funbuild.core.npm_frontend : npm_frontend: 252 | funbuild | - ./package.json: private=true, skip publish; set funbuild.publish to override
-2026-09-17 01:04:25.627 |INFO    | funbuild.core.base : base: 161 | funbuild | - funread-web push
+2026-10-09 16:12:29.510 |INFO    | funbuild.core.base : base: 365 | funbuild | - funread-web build
+2026-10-09 16:12:29.511 |INFO    | funbuild.core.base : base: 230 | funbuild | - funread-web pull
+2026-10-09 16:13:27.804 |INFO    | funbuild.core.base : base: 273 | funbuild | - funread-web push
