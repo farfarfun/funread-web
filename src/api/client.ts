@@ -166,8 +166,24 @@ export const api = {
     page?: number;
     limit?: number;
   }) => request<RssArticlePage>("/rss/articles", { params }),
-  rssArticle: (params: { sub_id: string; link: string; title?: string }) =>
-    request<RssArticleDetail>("/rss/article", { params }),
+  //  variables 必须回传：规则会在列表页 @put、在正文页 @get。丢掉它，
+  //  用这个模式的源会静默读到空正文。JSON 编码塞进 query —— 这是个 GET，
+  //  要保持 URL 可链接（刷新能回到同一篇）。
+  rssArticle: (params: {
+    sub_id: string;
+    link: string;
+    title?: string;
+    variables?: Record<string, string>;
+  }) => {
+    const { variables, ...rest } = params;
+    return request<RssArticleDetail>("/rss/article", {
+      params: {
+        ...rest,
+        variables:
+          variables && Object.keys(variables).length ? JSON.stringify(variables) : undefined,
+      },
+    });
+  },
   markRead: (
     sub_id: string,
     article_key: string,

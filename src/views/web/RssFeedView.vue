@@ -106,7 +106,14 @@ function open(article: RssArticle) {
   router.push({
     name: "rss-article",
     params: { subId: subId.value },
-    query: { link: article.link, title: article.title },
+    query: {
+      link: article.link,
+      title: article.title,
+      //  带着走，正文页会原样回传给后端 —— 见 api.rssArticle 的注释
+      variables: Object.keys(article.variables).length
+        ? JSON.stringify(article.variables)
+        : undefined,
+    },
   });
 }
 

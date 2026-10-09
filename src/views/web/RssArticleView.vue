@@ -118,6 +118,18 @@ const { colors, contentStyle } = useReaderSettings();
 const subId = computed(() => String(route.params.subId));
 const link = computed(() => String(route.query.link || ""));
 
+/** 列表页带过来的 variables。解不动就当空 —— 坏的 query 不该让整页打不开。 */
+const variables = computed<Record<string, string>>(() => {
+  const raw = String(route.query.variables || "");
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+});
+
 const article = ref<RssArticleDetail | null>(null);
 const loading = ref(true);
 const error = ref("");
@@ -134,6 +146,7 @@ async function load() {
       sub_id: subId.value,
       link: link.value,
       title: String(route.query.title || ""),
+      variables: variables.value,
     });
     //  打开即已读。这是订阅阅读的常规语义，不必再点一下。
     void api
