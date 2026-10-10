@@ -1,6 +1,6 @@
 {
   "name": "@farfarfun/funread-web",
-  "version": "1.1.104",
+  "version": "1.1.105",
   "description": "funread 前端服务：/admin 采集源管理端与 /web 阅读端，运行时反代 /api 到 funread-api",
   "type": "module",
   "license": "MIT",
