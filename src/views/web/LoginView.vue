@@ -69,12 +69,16 @@ onMounted(() => auth.ensure());
         </n-button>
       </n-form>
 
-      <p v-if="auth.registerOpen.value" class="gate__alt">
+      <!-- isLocal 也放行：零账号那条路服务端不受 FUNREAD_REGISTER_OPEN 约束，
+           这边藏掉链接会让设了该变量的新机器永远开不出第一个账号。 -->
+      <p v-if="auth.registerOpen.value || auth.isLocal.value" class="gate__alt">
         还没有账号？
-        <RouterLink :to="{ name: 'register', query: { next } }">用邀请码注册</RouterLink>
+        <RouterLink :to="{ name: 'register', query: { next } }">
+          {{ auth.isLocal.value ? "注册第一个账号" : "用邀请码注册" }}
+        </RouterLink>
       </p>
       <p v-else class="gate__alt gate__alt--muted">
-        注册未开放。服务端需要配置 <code>FUNREAD_REGISTER_CODE</code> 才能开新账号。
+        注册未开放。需要管理员签发一张邀请码才能开新账号。
       </p>
 
       <p class="gate__admin">

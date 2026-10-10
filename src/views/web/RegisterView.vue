@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * 注册。必须带邀请码 —— 服务端没配 `FUNREAD_REGISTER_CODE` 时注册端点直接 403，
- * 所以这一页先探一次 `/auth/accounts`，关着就不给表单，而不是让人填完再被拒。
+ * 注册。两条路，分岔只看「现在有没有账号」—— 和服务端的 `POST /auth/register`
+ * 一致：零账号时免邀请码且成 admin，已有账号时必须带一张库里签发过的码。
+ * 这一页先探一次 `/auth/accounts`，关着就不给表单，而不是让人填完再被拒。
  */
 import { useMessage } from "naive-ui";
 import { computed, onMounted, ref } from "vue";
@@ -26,8 +27,16 @@ const probing = ref(true);
 
 const next = computed(() => String(route.query.next || "/web"));
 const minLength = computed(() => summary.value?.min_password_length ?? 8);
-/** 还没有任何账号时提示一句：第一个账号会接管之前无账号时攒下的书架。 */
-const isFirst = computed(() => summary.value?.users === 0);
+/** 首次运行：不要邀请码，且提示一句第一个账号会接管之前攒下的书架。 */
+const isFirst = computed(() => Boolean(summary.value?.bootstrap));
+/**
+ * 注册关着**也要**渲染首次运行那条路的表单 —— 服务端的 bootstrap 分支刻意不受
+ * `FUNREAD_REGISTER_OPEN` 约束，在这边拦掉会让 `FUNREAD_REGISTER_OPEN=0` 的机器
+ * 永远开不出第一个账号。
+ */
+const closed = computed(
+  () => Boolean(summary.value) && !summary.value?.register_open && !isFirst.value,
+);
 
 const problem = computed(() => {
   if (username.value && username.value.trim().length < 3) return "用户名至少 3 位";
@@ -44,7 +53,8 @@ const ready = computed(
     username.value.trim().length >= 3 &&
     password.value.length >= minLength.value &&
     confirm.value === password.value &&
-    code.value.trim().length > 0,
+    //  首次运行那条路服务端不收邀请码，这边要求填就等于把新装的机器堵死。
+    (isFirst.value || code.value.trim().length > 0),
 );
 
 async function submit() {
@@ -66,7 +76,7 @@ onMounted(async () => {
     summary.value = await api.accounts();
   } catch {
     //  探测失败就按「可能开着」渲染，让用户试一次 —— 比直接堵住要好
-    summary.value = { users: 1, register_open: true, min_password_length: 8 };
+    summary.value = { users: 1, register_open: true, min_password_length: 8, bootstrap: false };
   } finally {
     probing.value = false;
   }
@@ -80,12 +90,12 @@ onMounted(async () => {
 
       <n-spin v-if="probing" class="gate__spin" />
 
-      <template v-else-if="summary && !summary.register_open">
+      <template v-else-if="closed">
         <n-result status="info" title="注册未开放" size="small">
           <template #footer>
             <p class="gate__hint">
-              服务端需要先配置环境变量 <code>FUNREAD_REGISTER_CODE</code>，
-              配置后用那个邀请码才能开账号。
+              服务端设了 <code>FUNREAD_REGISTER_OPEN=0</code>。要放人进来，
+              先去掉这个设置，再用 <code>funread-api accounts invite</code> 签发一张邀请码。
             </p>
             <n-button @click="router.replace({ name: 'login', query: { next } })">
               去登录
@@ -121,12 +131,13 @@ onMounted(async () => {
               v-model:value="confirm"
               type="password"
               :input-props="{ autocomplete: 'new-password' }"
+              @keyup.enter="submit"
             />
           </n-form-item>
-          <n-form-item label="邀请码" :show-feedback="false">
+          <n-form-item v-if="!isFirst" label="邀请码" :show-feedback="false">
             <n-input
               v-model:value="code"
-              placeholder="FUNREAD_REGISTER_CODE"
+              placeholder="管理员用 funread-api accounts invite 签发"
               :input-props="{ autocapitalize: 'off', autocorrect: 'off' }"
               @keyup.enter="submit"
             />

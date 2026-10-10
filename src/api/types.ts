@@ -118,12 +118,16 @@ export interface SessionState {
   username: string | null;
   /** 还没有任何账号、正在用隐式本地身份。前端据此决定要不要引导注册。 */
   local: boolean;
+  /** funauth 角色（`admin` / `guest`）。未登录时 `null`。 */
+  role: string | null;
 }
 
 export interface AccountSummary {
   users: number;
   register_open: boolean;
   min_password_length: number;
+  /** 还没有任何账号，首次运行那条路可走：**不要邀请码**，且不受 register_open 约束。 */
+  bootstrap: boolean;
 }
 
 // ---------------------------------------------------------------- 小说

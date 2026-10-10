@@ -153,7 +153,8 @@ onMounted(() => {
     </n-list>
 
     <div class="footer">
-      <n-button v-if="auth.isLocal.value && auth.registerOpen.value" block @click="router.push({ name: 'register' })">
+      <!-- registerOpen 不参与判断：零账号那条路服务端刻意不受它约束。 -->
+      <n-button v-if="auth.isLocal.value" block @click="router.push({ name: 'register' })">
         注册账号
       </n-button>
       <n-popconfirm v-else-if="auth.authenticated.value" @positive-click="logout">
