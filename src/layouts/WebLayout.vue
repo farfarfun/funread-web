@@ -79,7 +79,7 @@ const themeOverrides: GlobalThemeOverrides = {
 
 .web-shell--tabs {
   /* 给 TabBar 让位，含安全区 */
-  padding-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
 }
 
 /* 断点和 useViewport.WIDE_BREAKPOINT 必须一致，否则 JS 走侧栏布局而 CSS 还在

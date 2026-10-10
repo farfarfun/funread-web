@@ -53,7 +53,7 @@ const active = computed(() => route.meta.tab as string | undefined);
   justify-content: center;
   gap: 2px;
   /* 44px 是可点区域的下限，不是装饰 */
-  min-height: 52px;
+  min-height: var(--tabbar-height);
   padding: 6px 0;
   color: var(--text-muted);
   text-decoration: none;

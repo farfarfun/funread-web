@@ -257,6 +257,22 @@ export interface ShelfBook {
   last_chapter: string;
   updated_at: string;
   progress: Progress | null;
+  /** 分组名。空串 = 未分组。 */
+  group: string;
+  /** 上次检查更新时数到的章节数。0 = 还没查过，不是「没有章节」。 */
+  chapter_count: number;
+  /** 未读章节数，后端按 `chapter_count` 和进度算出来的，不是独立存的字段。 */
+  unread: number;
+  /** 空串 = 还没查过。 */
+  last_checked_at: string;
+  /** 上次检查失败的原因，成功一次就清掉。界面据此在这本书上标一个感叹号。 */
+  last_check_error: string;
+}
+
+export interface ShelfGroup {
+  /** 空串是「未分组」那一组，后端把它排在最后。 */
+  name: string;
+  count: number;
 }
 
 /**
@@ -295,6 +311,21 @@ export interface CacheState {
   book_key: string;
   chapter_indexes: number[];
   downloading: DownloadProgress | null;
+}
+
+export interface CheckUpdatesAccepted {
+  task_id: string;
+  queued: number;
+}
+
+export interface CheckProgress {
+  task_id: string;
+  state: "running" | "done" | "error";
+  total: number;
+  /** 已经查完的本数（成功的）。 */
+  done: number;
+  failed: number;
+  detail: string;
 }
 
 // ---------------------------------------------------------------- 订阅源

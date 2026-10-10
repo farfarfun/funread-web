@@ -12,6 +12,11 @@
   --border-subtle: rgba(0, 0, 0, 0.08);
   --text-muted: #6b6d73;
   --accent: #6d5ef8;
+  --danger: #e05252;
+  --warning: #d08700;
+  /* TabBar 的高度。WebLayout 要给它让出底部内边距，浮在它上面的东西（书架的
+     多选操作条）也要按它定位 —— 两处写死同一个数字迟早会错开一处。 */
+  --tabbar-height: 52px;
 }
 
 :root.dark {
@@ -20,6 +25,8 @@
   --border-subtle: rgba(255, 255, 255, 0.08);
   --text-muted: #8b8d95;
   --accent: #8b7ffa;
+  --danger: #e86a6a;
+  --warning: #d89614;
 }
 
 /* 屏幕阅读器可见、视觉上隐藏。加载态的 aria-live 文案用它。 */

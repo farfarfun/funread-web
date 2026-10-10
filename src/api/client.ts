@@ -4,6 +4,8 @@ import type {
   CacheState,
   Chapter,
   ChapterContent,
+  CheckProgress,
+  CheckUpdatesAccepted,
   CollectReport,
   DownloadAccepted,
   DownloadProgress,
@@ -21,6 +23,7 @@ import type {
   SearchPage,
   SessionState,
   ShelfBook,
+  ShelfGroup,
   Source,
   SourcePage,
   SourceRef,
@@ -142,7 +145,32 @@ export const api = {
   ) => request<PoolSource>(`/pool/${source_type}/${url_id}`, { method: "PATCH", ...json(payload) }),
 
   // -------------------------------------------------------------- 书架
-  shelf: () => request<ShelfBook[]>("/shelf"),
+  //  `group` 不传 = 整个书架，传空串 = 只看未分组的 —— 这两者在后端是不同的查询。
+  //  所以这里**不能**走 `params`：`query()` 会把空串当成「没传」丢掉（对 `q`、
+  //  `title` 这些是对的），那样「未分组」就永远筛不出来。自己拼一次。
+  shelf: (group?: string) =>
+    request<ShelfBook[]>(
+      group === undefined ? "/shelf" : `/shelf?group=${encodeURIComponent(group)}`,
+    ),
+  shelfGroups: () => request<ShelfGroup[]>("/shelf/groups"),
+  assignShelfGroup: (book_keys: string[], group: string) =>
+    request<{ affected: number }>("/shelf/groups/assign", {
+      method: "POST",
+      ...json({ book_keys, group }),
+    }),
+  renameShelfGroup: (old: string, next: string) =>
+    request<{ affected: number }>("/shelf/groups/rename", {
+      method: "POST",
+      ...json({ old, new: next }),
+    }),
+  //  202 + task_id：一本书要两个请求，几十本就是几分钟，撑不过请求超时。
+  checkShelfUpdates: (book_keys?: string[], interval = 1) =>
+    request<CheckUpdatesAccepted>("/shelf/check-updates", {
+      method: "POST",
+      ...json({ book_keys: book_keys ?? null, interval }),
+    }),
+  checkUpdatesProgress: (task_id: string) =>
+    request<CheckProgress>(`/shelf/check-updates/${task_id}`),
   addToShelf: (payload: Record<string, unknown>) =>
     request<{ book_key: string }>("/shelf", { method: "POST", ...json(payload) }),
   removeFromShelf: (book_key: string) =>
