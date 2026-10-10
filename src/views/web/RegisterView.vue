@@ -226,6 +226,10 @@ onMounted(async () => {
 }
 
 .gate__alt a {
+  /* 同 LoginView：行内链接的命中区只有一个行框高，手机上点不准。 */
+  display: inline-block;
+  min-height: 44px;
+  padding: var(--space-3) var(--space-2);
   color: var(--accent);
 }
 </style>

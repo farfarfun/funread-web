@@ -52,9 +52,13 @@ function goBack() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  margin-left: -6px;
+  /* 44×44：触屏上的最小命中区。它不是 n-button，tokens.css 里那条
+     `@media (pointer: coarse) .n-button { min-height: 44px }` 管不到。
+     负 margin 跟着放大（-6 → -10），让 22px 图标的左边缘停在原位，
+     视觉上标题和返回箭头的间距不变。 */
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
   padding: 0;
   color: inherit;
   background: none;

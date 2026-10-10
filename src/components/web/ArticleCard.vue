@@ -1,22 +1,26 @@
 <script setup lang="ts">
 /** 订阅文章列表里的一条。已读的整体压暗 —— 这是列表里最需要一眼分清的状态。 */
 import { StarOutline, Star } from "@vicons/ionicons5";
+import { computed } from "vue";
 
 import type { RssArticle } from "../../api/types";
+import { formatFeedDate, plainText } from "../../utils/display";
 
 const props = defineProps<{ article: RssArticle }>();
 const emit = defineEmits<{ favorite: [article: RssArticle] }>();
+
+//  源站的 description 多半是 HTML，不去标签的话卡片上显示的是 `<a href="…`。
+const summary = computed(() => plainText(props.article.description));
+const when = computed(() => formatFeedDate(props.article.pub_date));
 </script>
 
 <template>
   <article class="article-card" :class="{ 'article-card--read': props.article.read }">
     <div class="article-card__body">
       <h3 class="article-card__title">{{ props.article.title }}</h3>
-      <p v-if="props.article.description" class="article-card__summary">
-        {{ props.article.description }}
-      </p>
+      <p v-if="summary" class="article-card__summary">{{ summary }}</p>
       <p class="article-card__meta">
-        <span v-if="props.article.pub_date">{{ props.article.pub_date }}</span>
+        <span v-if="when">{{ when }}</span>
         <span v-if="props.article.read" class="article-card__read">已读</span>
       </p>
     </div>
@@ -87,7 +91,8 @@ const emit = defineEmits<{ favorite: [article: RssArticle] }>();
   display: flex;
   gap: var(--space-2);
   margin: 0;
-  font-size: 11px;
+  /* 12px 是手机上的下限，11px 在实际尺寸下已经要眯着眼看了 */
+  font-size: 12px;
   color: var(--text-muted);
 }
 

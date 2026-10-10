@@ -545,7 +545,14 @@ onUnmounted(stopPolling);
 }
 
 .tabs__item {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  /* 触屏上要够 36px 高才点得准。胶囊本体保持 5px 内边距（视觉上别变胖），
+     靠 min-height 把可点区域撑起来 —— tokens.css 里那条
+     `@media (pointer: coarse) .n-button { min-height: 44px }` 管不到这里，
+     它不是 n-button。44 在横滚条里太高（会把书架推下去），36 是折中。 */
+  min-height: 36px;
   padding: 5px 12px;
   color: var(--text-muted);
   font-size: 13px;
@@ -553,6 +560,12 @@ onUnmounted(stopPolling);
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .tabs__item {
+    min-height: 40px;
+  }
 }
 
 .tabs__item--on {

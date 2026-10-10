@@ -18,6 +18,7 @@ import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 import { useShortcuts } from "../../composables/useShortcuts";
+import { formatFeedDate } from "../../utils/display";
 
 /** 允许留在正文里的标签。其余一律拆掉但保留内部文字。 */
 const ALLOWED_TAGS = new Set([
@@ -261,7 +262,7 @@ onMounted(load);
     <article v-else-if="article" class="article__body" :style="contentStyle">
       <h2 class="article__title">{{ article.title }}</h2>
       <p v-if="article.pub_date" class="article__date" :style="{ color: colors.muted }">
-        {{ article.pub_date }}
+        {{ formatFeedDate(article.pub_date) }}
       </p>
       <!-- eslint-disable-next-line vue/no-v-html -- 已经过 sanitize() 白名单过滤 -->
       <div class="article__html" v-html="safeHtml" />

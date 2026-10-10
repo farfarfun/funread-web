@@ -137,6 +137,13 @@ onMounted(() => auth.ensure());
 
 .gate__alt a,
 .gate__admin a {
+  /* inline-block + min-height：行内链接的可点区域只有一个 17px 的行框高，
+     在手机上点不准（2026-10-10 手机尺寸走查量到的）。inline-block 让
+     padding 真的撑开命中区；min-height 44px 是 iOS HIG 的下限，只靠
+     padding 凑到的是 35px，还差一截。视觉上仍是一行文字。 */
+  display: inline-block;
+  min-height: 44px;
+  padding: var(--space-3) var(--space-2);
   color: var(--accent);
 }
 </style>

@@ -17,6 +17,7 @@ import { api } from "../../api/client";
 import type { RssFavorite } from "../../api/types";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { formatFeedDate } from "../../utils/display";
 
 const router = useRouter();
 const message = useMessage();
@@ -85,7 +86,7 @@ onActivated(load);
           <div class="row__body">
             <p class="row__title">{{ item.title || "（无标题）" }}</p>
             <p class="row__meta">
-              <span v-if="item.pub_date">{{ item.pub_date }}</span>
+              <span v-if="item.pub_date">{{ formatFeedDate(item.pub_date) }}</span>
               <span v-if="item.read" class="row__read">已读</span>
             </p>
           </div>

@@ -50,12 +50,23 @@ body {
   overflow-x: hidden;
 }
 
-/* iOS 上 input 字号小于 16px 会触发自动放大，把整个布局顶歪 */
+/*
+ * iOS 上 input 字号小于 16px 会触发自动放大，把整个布局顶歪。
+ *
+ * 裸 `input` 选择器**打不过 naive-ui** —— 它把字号写在
+ * `.n-input__input-el` 上，而且样式是运行时注入的，在层叠里排在本文件之后。
+ * 所以必须把它自己的类名也点进来（实测 2026-10-10：只留裸选择器时登录页
+ * 量到的仍是 14px）。`!important` 是故意的：naive 的注入顺序不由我们控制，
+ * 单靠提高特异度仍然可能被同特异度的后来者盖掉。
+ */
 @media (max-width: 768px) {
   input,
   textarea,
-  select {
-    font-size: max(16px, 1em);
+  select,
+  .n-input .n-input__input-el,
+  .n-input .n-input__textarea-el,
+  .n-base-selection-input__content {
+    font-size: max(16px, 1em) !important;
   }
 }
 

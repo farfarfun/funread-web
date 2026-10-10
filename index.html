@@ -10,6 +10,12 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="funread" />
+    <!-- 不声明图标时浏览器会自己去要根路径的 /favicon.ico，SPA 的 html 兜底
+         会把一段 HTML 当图标返回（控制台一条常驻报错）。显式指上。 -->
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <!-- iOS 的「添加到主屏幕」既不读 manifest 的 icons 也不认 SVG，没有这张
+         180×180 的 PNG 就会拿网页截图当图标。 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>funread</title>
   </head>
