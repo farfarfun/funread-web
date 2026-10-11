@@ -49,7 +49,7 @@ function usage() {
       "",
       "Options:",
       "  --config PATH   config file (.toml/.json/.env); defaults to",
-      "                  ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/config.toml.",
+      "                  ~/.farfarfun/funread/web/config.toml.",
       "                  The PID and log files live in the same directory.",
       `  --port N        listen port (default ${8811}, or FUNREAD_WEB_PORT)`,
       "  --host ADDR     bind address (default 0.0.0.0, or FUNREAD_WEB_HOST)",

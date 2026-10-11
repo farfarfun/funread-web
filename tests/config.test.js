@@ -9,6 +9,7 @@ import { ConfigError, DEFAULT_BACKEND, DEFAULT_PORT, resolveSettings } from "../
 let workdir;
 let savedEnv;
 const ENV_KEYS = [
+  "HOME",
   "XDG_CONFIG_HOME",
   "FUNREAD_WEB_PORT",
   "FUNREAD_WEB_HOST",
@@ -19,6 +20,11 @@ beforeEach(() => {
   workdir = fs.mkdtempSync(path.join(os.tmpdir(), "funread-web-test-"));
   savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   for (const key of ENV_KEYS) delete process.env[key];
+  // HOME must be isolated: the default config now lives at ~/.farfarfun/funread/web/,
+  // so without this the suite would read the developer's real config and the
+  // migration would move their real files. XDG_CONFIG_HOME is pointed into the
+  // workdir too -- legacyStateDir() still honours it, by design.
+  process.env.HOME = path.join(workdir, "home");
   process.env.XDG_CONFIG_HOME = path.join(workdir, "xdg");
 });
 
@@ -43,7 +49,7 @@ describe("settings resolution", () => {
     assert.equal(settings.backend, DEFAULT_BACKEND);
     assert.equal(
       settings.configPath,
-      path.join(workdir, "xdg", "farfarfun", "funread-web", "config.toml"),
+      path.join(workdir, "home", ".farfarfun", "funread", "web", "config.toml"),
     );
   });
 
@@ -145,5 +151,55 @@ describe("config file errors", () => {
     const settings = resolveSettings({ config });
     assert.equal(settings.host, "10.0.0.8");
     assert.equal(settings.port, 9006);
+  });
+});
+
+/**
+ * 1.1.114 moved the config out of ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/
+ * and into ~/.farfarfun/funread/web/. These go through resolveSettings rather than
+ * calling the migration directly, because the ordering is the part that matters:
+ * migrating *after* readConfig would silently ignore the file it just moved.
+ */
+describe("legacy config migration", () => {
+  const legacy = (name, body) => {
+    const dir = path.join(workdir, "xdg", "farfarfun", "funread-web");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), body, "utf8");
+    return path.join(dir, name);
+  };
+  const newPath = () => path.join(workdir, "home", ".farfarfun", "funread", "web", "config.toml");
+
+  it("moves a leftover config and reads the moved file", () => {
+    const from = legacy("config.toml", "port = 9101\n");
+    const settings = resolveSettings({});
+    assert.equal(settings.port, 9101);
+    assert.equal(settings.configPath, newPath());
+    assert.ok(!fs.existsSync(from));
+  });
+
+  it("leaves the PID and log behind", () => {
+    legacy("config.toml", "");
+    legacy("funread-web.pid", "4242");
+    legacy("funread-web.log", "old\n");
+    resolveSettings({});
+    // Carrying the PID across would point the new location's `stop` at a process
+    // that has nothing to do with it; both are recreated on next start.
+    const dir = path.join(workdir, "xdg", "farfarfun", "funread-web");
+    assert.ok(fs.existsSync(path.join(dir, "funread-web.pid")));
+    assert.ok(fs.existsSync(path.join(dir, "funread-web.log")));
+  });
+
+  it("never clobbers a config already at the new location", () => {
+    legacy("config.toml", "port = 9102\n");
+    fs.mkdirSync(path.dirname(newPath()), { recursive: true });
+    fs.writeFileSync(newPath(), "port = 9103\n", "utf8");
+    assert.equal(resolveSettings({}).port, 9103);
+  });
+
+  it("does not migrate when the user named a config by hand", () => {
+    const from = legacy("config.toml", "port = 9104\n");
+    const config = write("explicit.toml", "port = 9105\n");
+    assert.equal(resolveSettings({ config }).port, 9105);
+    assert.ok(fs.existsSync(from));
   });
 });

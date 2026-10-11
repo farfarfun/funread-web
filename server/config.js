@@ -7,11 +7,20 @@
  *   3. the FUNREAD_WEB_PORT / FUNREAD_API_BASE_URL environment variables
  *   4. the hardcoded defaults
  *
- * The config file defaults to
- * ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/config.toml and is parsed
+ * The config file defaults to ~/.farfarfun/funread/web/config.toml and is parsed
  * by extension (.toml / .json / .env). The PID and log files live next to
  * whichever config actually resolved -- so `stop` works from any directory, and
  * two instances driven by two configs keep independent state.
+ *
+ * That path is deliberately NOT under XDG_CONFIG_HOME: the directory also holds
+ * the PID and log files, which are not "config" in the XDG sense. Honouring XDG
+ * would scatter one service's state across config/state/runtime; a single root
+ * under $HOME (like ~/.ssh or ~/.aws) keeps it in one place. funread-api uses
+ * the matching ~/.farfarfun/funread/api.
+ *
+ * Installs predating 1.1.114 kept the config under
+ * ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/; it is moved across on
+ * first run, see migrateLegacyState().
  *
  * FUNREAD_API_BASE_URL is deliberately the same variable vite.config.ts reads
  * for its dev proxy: one knob, so `pnpm dev` and the built CLI cannot drift.
@@ -31,9 +40,67 @@ export const PROXY_PREFIXES = ["/api", "/healthz"];
 
 export class ConfigError extends Error {}
 
+export const ORG_DIR = ".farfarfun";
+export const PRODUCT_DIR = "funread";
+export const COMPONENT_DIR = "web";
+
+/** ~/.farfarfun/funread/web -- config, PID and log all live here. */
+export function stateDirFor() {
+  return path.join(os.homedir(), ORG_DIR, PRODUCT_DIR, COMPONENT_DIR);
+}
+
 function defaultConfigPath() {
+  return path.join(stateDirFor(), "config.toml");
+}
+
+/**
+ * Where installs predating 1.1.114 kept their config. Computed the *old* way,
+ * XDG_CONFIG_HOME layer included -- otherwise the file would not be found on a
+ * host that sets it.
+ */
+function legacyStateDir() {
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(base, "farfarfun", CLI_NAME, "config.toml");
+  return path.join(base, "farfarfun", CLI_NAME);
+}
+
+/**
+ * Move a leftover config.toml from the pre-1.1.114 location. Returns the names
+ * moved, so the caller can say so.
+ *
+ * Only config.toml moves: the PID and log files describe a process started
+ * under the old layout, and carrying the PID across would point the new
+ * location's `stop` at something unrelated. They are recreated on next start.
+ *
+ * One-shot by construction -- renaming removes the source, so every later call
+ * is a no-op. Failure (permissions, cross-device) is swallowed: this is a
+ * best-effort tidy-up and must not keep the server from starting.
+ */
+function migrateLegacyState() {
+  const target = stateDirFor();
+  const source = legacyStateDir();
+  if (source === target) return [];
+
+  const moved = [];
+  for (const name of ["config.toml"]) {
+    const from = path.join(source, name);
+    const to = path.join(target, name);
+    // Never clobber the target: the file already there is the one in use.
+    if (!fs.existsSync(from) || fs.existsSync(to)) continue;
+    try {
+      fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+      fs.renameSync(from, to);
+    } catch {
+      // EXDEV and friends: fall back to copy, then drop the original.
+      try {
+        fs.copyFileSync(from, to);
+        fs.unlinkSync(from);
+      } catch {
+        continue;
+      }
+    }
+    moved.push(name);
+  }
+  return moved;
 }
 
 function stripQuotes(value) {
@@ -176,6 +243,13 @@ function normaliseBackend(value, source) {
  */
 export function resolveSettings(flags = {}) {
   const explicit = flags.config !== undefined && flags.config !== null;
+  if (!explicit) {
+    // Only migrate on the default path: an explicit --config names a file the
+    // user manages. Before readConfig, so the moved file is the one we read.
+    for (const name of migrateLegacyState()) {
+      console.log(`已从旧配置目录迁移 ${name} -> ${stateDirFor()}`);
+    }
+  }
   const configPath = path.resolve(explicit ? flags.config : defaultConfigPath());
   const config = readConfig(configPath, explicit);
 

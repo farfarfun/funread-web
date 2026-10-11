@@ -13,8 +13,8 @@ CLI_NAME="funread-web"
 # 从哪个 registry 装（见 package.json 的 publishConfig），命令名是用户敲的那个。
 PKG_NAME="@farfarfun/funread-web"
 PORT=8811
-# 留空 = 用 CLI 自己的默认路径
-# ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/config.toml。
+# 留空 = 用 CLI 自己的默认路径 ~/.farfarfun/funread/web/config.toml
+# （1.1.114 之前在 ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/，首次运行会自动迁移）。
 # funread-web.pid 由 CLI 自己写在实际生效的 config 同目录下。
 CONFIG_PATH=""
 
