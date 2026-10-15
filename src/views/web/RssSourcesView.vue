@@ -9,7 +9,6 @@
 import { SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
 import type { RssSource } from "../../api/types";
@@ -18,7 +17,6 @@ import TopBar from "../../components/web/TopBar.vue";
 
 const PAGE_SIZE = 30;
 
-const router = useRouter();
 const message = useMessage();
 
 const items = ref<RssSource[]>([]);
@@ -28,6 +26,11 @@ const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref("");
 const subscribing = ref<number | null>(null);
+/**
+ * 已订阅的 `url_id`。**进页面时就要拉一次** —— 只记本次点击的话，翻回这一页时
+ * 已订阅的源又会显示成可订阅，点下去撞一个「已经订阅过」的错误。
+ */
+const subscribed = ref<Set<number>>(new Set());
 
 async function load(reset = true) {
   if (reset) {
@@ -53,12 +56,24 @@ async function load(reset = true) {
   }
 }
 
+/** 拉已订阅列表，用来把目录里已经订过的源置灰。失败不影响浏览目录。 */
+async function loadSubscribed() {
+  try {
+    const subs = await api.subscriptions();
+    subscribed.value = new Set(subs.map((item) => item.url_id));
+  } catch {
+    //  未登录或网络抖动：目录照常能看，按钮退化成可点，点了会收到后端的错误。
+  }
+}
+
 async function subscribe(source: RssSource) {
   subscribing.value = source.url_id;
   try {
     const created = await api.subscribeLegado(source.url_id);
     message.success(`已订阅「${created.title}」`);
-    router.push({ name: "rss-feed", params: { subId: created.sub_id } });
+    //  **留在目录页**：订一个就被弹进详情页的话，想连着订第二个还得退回来。
+    //  订阅成功的反馈由按钮置灰给出。
+    subscribed.value = new Set(subscribed.value).add(source.url_id);
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "订阅失败");
   } finally {
@@ -66,7 +81,10 @@ async function subscribe(source: RssSource) {
   }
 }
 
-onMounted(() => load());
+onMounted(() => {
+  void load();
+  void loadSubscribed();
+});
 </script>
 
 <template>
@@ -134,11 +152,12 @@ onMounted(() => load());
           <template #suffix>
             <n-button
               size="small"
-              type="primary"
+              :type="subscribed.has(source.url_id) ? 'default' : 'primary'"
+              :disabled="subscribed.has(source.url_id)"
               :loading="subscribing === source.url_id"
               @click="subscribe(source)"
             >
-              订阅
+              {{ subscribed.has(source.url_id) ? "已订阅" : "订阅" }}
             </n-button>
           </template>
         </n-list-item>

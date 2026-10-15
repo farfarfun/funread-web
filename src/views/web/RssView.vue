@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /** 我的订阅。两种来源（归档源 / 自填 feed）在这里是同一个列表。 */
-import { AddOutline, StarOutline } from "@vicons/ionicons5";
+import { AddOutline, AlertCircle, StarOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { onActivated, onMounted, ref } from "vue";
+import { computed, onActivated, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -20,6 +20,20 @@ const showAdd = ref(false);
 const feedUrl = ref("");
 const feedTitle = ref("");
 const subscribing = ref(false);
+/**
+ * 正在看哪一条的报错详情。
+ *
+ * 抓取失败必须说出来（空列表和「没有新内容」长得一样），但不能摊在列表里 ——
+ * 一条带堆栈的错误能占掉半屏，反而把正常的订阅挤没了。所以列表里只留一个红色
+ * 图标，详情进弹窗。
+ */
+const errorDetail = ref<Subscription | null>(null);
+const showError = computed({
+  get: () => errorDetail.value !== null,
+  set: (value: boolean) => {
+    if (!value) errorDetail.value = null;
+  },
+});
 
 async function load() {
   loading.value = true;
@@ -132,16 +146,22 @@ onActivated(load);
               {{ subscription.title.slice(0, 1) || "订" }}
             </span>
             <div class="sub__body">
-              <p class="sub__title">{{ subscription.title }}</p>
+              <p class="sub__title">
+                <span class="sub__title-text">{{ subscription.title }}</span>
+                <!-- 失败只占一个图标位，详情进弹窗 -->
+                <n-icon
+                  v-if="subscription.last_error"
+                  class="sub__warn"
+                  :component="AlertCircle"
+                  title="上次刷新失败，点击查看"
+                  @click.stop="errorDetail = subscription"
+                />
+              </p>
               <p class="sub__meta">
                 <n-tag size="tiny" :bordered="false">
                   {{ subscription.kind === "feed" ? "feed" : "归档源" }}
                 </n-tag>
                 <span v-if="subscription.read_count">已读 {{ subscription.read_count }} 篇</span>
-              </p>
-              <!-- 抓取失败必须说出来：空列表和「没有新内容」长得一样 -->
-              <p v-if="subscription.last_error" class="sub__error">
-                上次刷新失败：{{ subscription.last_error }}
               </p>
             </div>
           </div>
@@ -175,6 +195,16 @@ onActivated(load);
         <div class="modal-actions">
           <n-button @click="showAdd = false">取消</n-button>
           <n-button type="primary" :loading="subscribing" @click="addFeed">订阅</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal v-model:show="showError" preset="card" title="上次刷新失败" class="error-modal">
+      <p class="error-modal__name">{{ errorDetail?.title }}</p>
+      <pre class="error-modal__body">{{ errorDetail?.last_error }}</pre>
+      <template #footer>
+        <div class="modal-actions">
+          <n-button @click="showError = false">知道了</n-button>
         </div>
       </template>
     </n-modal>
@@ -250,12 +280,14 @@ onActivated(load);
 }
 
 .sub__title {
+  /* 改成 flex 让警告图标贴在标题右侧；截断交给里面的 .sub__title-text */
+  display: flex;
+  gap: 5px;
+  align-items: center;
   margin: 0 0 2px;
   overflow: hidden;
   font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .sub__meta {
@@ -267,10 +299,39 @@ onActivated(load);
   color: var(--text-muted);
 }
 
-.sub__error {
-  margin: 4px 0 0;
-  font-size: 11px;
+.sub__title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub__warn {
+  flex: none;
+  font-size: 15px;
   color: #d03050;
+  cursor: pointer;
+}
+
+.error-modal {
+  width: min(92vw, 460px);
+}
+
+.error-modal__name {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.error-modal__body {
+  /* 错误原文可能很长、也可能一行不断 —— 两种都要收在框里，不能把弹窗撑爆 */
+  max-height: 46vh;
+  margin: 0;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .add-modal {
