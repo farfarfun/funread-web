@@ -56,6 +56,14 @@ const bookKey = computed(() => String(route.params.bookKey));
 const info = ref<BookInfo | null>(null);
 const chapters = ref<Chapter[]>([]);
 const shelfBook = ref<ShelfBook | null>(null);
+/**
+ * 这本书从哪个源、哪个 URL 读。**不要求书在书架里** —— 从搜索结果点进来试读是
+ * 正常用法，而书架记录此时还不存在。规则与 `BookView` 一致：query 优先，书架兜底
+ * （从书架进来时 query 里只有 bookKey）。换源会就地改写它。
+ */
+const origin = ref<{ book_url: string; name: string; author: string } | null>(null);
+/** 在书架里才有进度可存可取；不在书架就是一次纯试读。 */
+const onShelf = computed(() => shelfBook.value !== null);
 const content = ref<ChapterContent | null>(null);
 const cachedIndexes = ref<number[]>([]);
 const switchPage = ref<SwitchSourcePage | null>(null);
@@ -130,38 +138,40 @@ async function bootstrap() {
   loading.value = true;
   error.value = "";
   try {
+    //  书架只用来恢复「读到哪」和兜底来源信息，**不是进正文页的前提**。
+    //  未登录时这里会 401，catch 成空书架继续走 —— 试读不需要身份。
     const shelf = await api.shelf().catch(() => [] as ShelfBook[]);
     shelfBook.value = shelf.find((item) => item.book_key === bookKey.value) ?? null;
-    if (!shelfBook.value) {
-      error.value = "这本书不在书架里，先从详情页加入书架";
-      return;
-    }
-    urlId.value = Number(route.query.url_id) || shelfBook.value.url_id || 0;
-    if (!urlId.value) {
-      error.value = "缺少来源信息";
-      return;
-    }
 
-    info.value = await api.bookInfo({
-      url_id: urlId.value,
-      book_url: shelfBook.value.book_url,
-      name: shelfBook.value.name,
-      author: shelfBook.value.author,
-    });
+    const bookUrl = String(route.query.book_url || shelfBook.value?.book_url || "");
+    urlId.value = Number(route.query.url_id) || shelfBook.value?.url_id || 0;
+    if (!bookUrl || !urlId.value) {
+      error.value = "缺少来源信息，请从搜索结果或书架进入";
+      return;
+    }
+    origin.value = {
+      book_url: bookUrl,
+      name: String(route.query.name || shelfBook.value?.name || ""),
+      author: String(route.query.author || shelfBook.value?.author || ""),
+    };
+
+    info.value = await api.bookInfo({ url_id: urlId.value, ...origin.value });
     const toc = await api.toc(urlId.value, info.value);
     chapters.value = toc.items;
 
     const requested = Number(route.query.chapter);
     index.value = Number.isFinite(requested)
       ? Math.min(Math.max(0, requested), Math.max(0, chapters.value.length - 1))
-      : (shelfBook.value.progress?.chapter_index ?? 0);
+      : (shelfBook.value?.progress?.chapter_index ?? 0);
 
-    api
-      .cached(bookKey.value)
-      .then((state) => (cachedIndexes.value = state.chapter_indexes))
-      .catch(() => undefined);
+    if (onShelf.value) {
+      api
+        .cached(bookKey.value)
+        .then((state) => (cachedIndexes.value = state.chapter_indexes))
+        .catch(() => undefined);
+    }
 
-    await loadChapter(shelfBook.value.progress?.char_offset ?? 0);
+    await loadChapter(shelfBook.value?.progress?.char_offset ?? 0);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
@@ -212,6 +222,9 @@ function currentOffset(): number {
 async function save(offset: number, options: { immediate?: boolean } = {}) {
   const chapter = current.value;
   if (!chapter) return;
+  //  试读（书不在书架）没有可写的进度记录，后端会 404。直接不发，省得每个节流
+  //  窗口都打一次注定失败的请求。
+  if (!onShelf.value) return;
   pendingOffset = offset;
   if (!options.immediate) return;
   if (saveTimer) window.clearTimeout(saveTimer);
@@ -324,6 +337,14 @@ async function openSources() {
 }
 
 async function loadSources() {
+  //  换源要靠书架记录恢复书名来做聚合搜索（后端 `/reader/sources` 读的是调用者
+  //  的书架），试读时那条记录不存在，直接请求只会换来一个 404。说清为什么，
+  //  别让人以为是源都挂了。
+  if (!onShelf.value) {
+    switchError.value = "换源需要先把这本书加入书架";
+    switchPage.value = null;
+    return;
+  }
   sourcesLoading.value = true;
   switchError.value = "";
   try {
@@ -363,6 +384,7 @@ async function switchTo(source: SwitchCandidate) {
     else message.success(text);
 
     urlId.value = source.url_id;
+    if (origin.value) origin.value = { ...origin.value, book_url: source.book_url };
     if (shelfBook.value) {
       shelfBook.value = {
         ...shelfBook.value,
@@ -370,10 +392,18 @@ async function switchTo(source: SwitchCandidate) {
         book_url: source.book_url,
       };
     }
+    //  来源信息要留在 URL 里：这一页刷新后仍然可能是「不在书架」的试读，
+    //  那时没有书架记录可以兜底。
     await router.replace({
       name: "read",
       params: { bookKey: bookKey.value },
-      query: { url_id: String(source.url_id), chapter: String(result.chapter_index) },
+      query: {
+        url_id: String(source.url_id),
+        chapter: String(result.chapter_index),
+        book_url: source.book_url,
+        name: origin.value?.name ?? "",
+        author: origin.value?.author ?? "",
+      },
     });
     //  整条链都要用新源重算：BookInfo 的 variables、目录、正文
     await reloadFromNewSource(result.chapter_index);
@@ -389,9 +419,9 @@ async function reloadFromNewSource(targetIndex: number) {
   try {
     info.value = await api.bookInfo({
       url_id: urlId.value,
-      book_url: shelfBook.value?.book_url ?? "",
-      name: shelfBook.value?.name ?? "",
-      author: shelfBook.value?.author ?? "",
+      book_url: origin.value?.book_url ?? "",
+      name: origin.value?.name ?? "",
+      author: origin.value?.author ?? "",
     });
     const toc = await api.toc(urlId.value, info.value);
     chapters.value = toc.items;

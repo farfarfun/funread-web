@@ -266,7 +266,15 @@ function read(chapter: Chapter) {
   router.push({
     name: "read",
     params: { bookKey: bookKey.value },
-    query: { chapter: String(chapter.index), url_id: String(urlId.value) },
+    query: {
+      chapter: String(chapter.index),
+      url_id: String(urlId.value),
+      //  来源信息必须跟着走：这本书可能还没加书架（搜到就直接试读是正常用法），
+      //  正文页那边就没有书架记录可以恢复这几个字段。
+      book_url: info.value?.book_url ?? "",
+      name: info.value?.name ?? "",
+      author: info.value?.author ?? "",
+    },
   });
 }
 
