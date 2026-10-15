@@ -23,3 +23,13 @@ pnpm dev
 浏览器只请求同源 `/api`；Vite 默认转发到 `127.0.0.1:18811`。后端地址不同时，设置
 `FUNREAD_API_BASE_URL`。页面支持登记、筛选、排序、分页、启停、立即采集、重置刷新时间、
 单条/批量删除以及操作队列反馈。
+
+---
+
+## 关于 farfarfun
+
+[farfarfun](https://github.com/farfarfun) 是一个专注于实用工具库的开源组织，
+涵盖云存储、数据处理、AI、多媒体与开发工具链等方向。
+
+- 🏠 组织主页：<https://github.com/farfarfun>
+- 📧 联系：farfarfun@qq.com
