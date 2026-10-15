@@ -14,10 +14,10 @@
 import { RefreshOutline, SearchOutline } from "@vicons/ionicons5";
 import type { DataTableColumns } from "naive-ui";
 import { NButton, NSpace, NSwitch, NTag, useMessage } from "naive-ui";
-import { computed, h, onMounted, ref } from "vue";
+import { computed, h, onMounted, onUnmounted, ref } from "vue";
 
 import { api } from "../../api/client";
-import type { PoolPage, PoolSource, SourceType } from "../../api/types";
+import type { PoolPage, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
 import { formatTime, fromNow } from "../../utils/display";
 
 defineProps<{ dark: boolean }>();
@@ -48,6 +48,82 @@ const TYPE_OPTIONS = [
 ];
 
 const summary = computed(() => page.value?.summary);
+
+// ----------------------------------------------------------------- 批量测试
+//
+// 「这个源还能用吗」只有真跑一次才知道。采集侧的可达标记预测力极差，而用户搜索
+// 时顺带记下的成败又太稀疏 —— 没被选中的源永远没有记录，没记录又让它更难被选中。
+// 批量测试打破这个循环：每个源都测、可以反复测，累计成功率成为第一排序键。
+
+const TEST_POLL_MS = 1500;
+
+const testing = ref<SourceTestProgress | null>(null);
+const testLimit = ref(50);
+const untestedOnly = ref(false);
+let testTimer: number | undefined;
+
+async function startTest() {
+  if (testing.value) return;
+  try {
+    const accepted = await api.testSources({
+      source_type: sourceType.value,
+      limit: testLimit.value,
+      untested_only: untestedOnly.value,
+    });
+    message.success(`已排入 ${accepted.queued} 个源`);
+    testing.value = {
+      task_id: accepted.task_id,
+      state: "running",
+      total: accepted.queued,
+      done: 0,
+      failed: 0,
+      detail: "",
+    };
+    pollTest();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "启动测试失败");
+  }
+}
+
+function pollTest() {
+  window.clearTimeout(testTimer);
+  testTimer = window.setTimeout(async () => {
+    const task = testing.value;
+    if (!task) return;
+    try {
+      const progress = await api.testProgress(task.task_id);
+      testing.value = progress;
+      if (progress.state === "running") {
+        pollTest();
+        return;
+      }
+      //  跑完了刷新列表 —— 成功率是第一排序键，顺序会变
+      testing.value = null;
+      await load();
+      if (progress.state === "error") message.error(`测试中断：${progress.detail}`);
+      else {
+        const ok = progress.done - progress.failed;
+        message.success(`测试完成：${ok} 个可用，${progress.failed} 个失败`);
+      }
+    } catch {
+      //  任务过期（tracker 只保留 10 分钟）就别再问了
+      testing.value = null;
+      void load();
+    }
+  }, TEST_POLL_MS);
+}
+
+async function resetScores() {
+  try {
+    const result = await api.resetScores(sourceType.value);
+    message.success(`已清空 ${result.reset} 个源的测试记录`);
+    await load();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "清空失败");
+  }
+}
+
+onUnmounted(() => window.clearTimeout(testTimer));
 
 async function load() {
   loading.value = true;
@@ -123,6 +199,25 @@ const columns = computed<DataTableColumns<PoolSource>>(() => [
       }
       if (row.fail_count) return h("span", { class: "bad" }, `失败 ${row.fail_count} 次`);
       return h("span", { class: "muted" }, "没跑过");
+    },
+  },
+  {
+    title: "成功率",
+    key: "success_rate",
+    width: 130,
+    render: (row) => {
+      //  没测过给「—」而不是 0%：「没测过」和「测了全失败」在排序里差着 0.5，
+      //  界面上也必须分得开，否则会以为这些源都坏了。
+      if (row.success_rate === null) {
+        return h("span", { class: "muted" }, "—");
+      }
+      const percent = Math.round(row.success_rate * 100);
+      const tone = percent >= 60 ? "ok" : percent > 0 ? "warn" : "bad";
+      return h(
+        "span",
+        { class: tone, title: `测 ${row.test_count} 次，成功 ${row.test_ok_count} 次` },
+        `${percent}%  (${row.test_ok_count}/${row.test_count})`,
+      );
     },
   },
   {
@@ -216,6 +311,51 @@ onMounted(load);
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
       <n-button type="primary" @click="reload">查询</n-button>
+    </div>
+
+    <div class="testbar">
+      <div class="testbar__main">
+        <n-button
+          type="primary"
+          secondary
+          :loading="Boolean(testing)"
+          @click="startTest"
+        >
+          批量测试
+        </n-button>
+        <n-input-number
+          v-model:value="testLimit"
+          :min="1"
+          :max="500"
+          :step="10"
+          size="small"
+          class="testbar__limit"
+          :disabled="Boolean(testing)"
+        />
+        <n-checkbox v-model:checked="untestedOnly" :disabled="Boolean(testing)">
+          只测没测过的
+        </n-checkbox>
+        <n-popconfirm @positive-click="resetScores">
+          <template #trigger>
+            <n-button size="small" quaternary :disabled="Boolean(testing)">清空成绩</n-button>
+          </template>
+          会把当前类型下所有源的测试次数与成功次数清零，排序回到未测状态。确定吗？
+        </n-popconfirm>
+      </div>
+      <p class="testbar__hint">
+        {{
+          sourceType === "book"
+            ? "逐个用固定关键词「我的」搜一次，搜出书才算成功。"
+            : "逐个真抓一次文章列表，解析出文章才算成功。"
+        }}
+        串行执行不并发——这些请求直接打在别人站点上。用户真实使用的结果也计入同一组统计。
+      </p>
+      <n-progress
+        v-if="testing"
+        type="line"
+        :percentage="testing.total ? Math.round((testing.done / testing.total) * 100) : 0"
+        :indicator-placement="'inside'"
+      />
     </div>
 
     <n-alert v-if="error" type="error" :title="error" class="alert" />
@@ -327,6 +467,33 @@ onMounted(load);
   width: 140px;
 }
 
+.testbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3, 12px);
+  margin-bottom: var(--space-3, 12px);
+  background: rgba(128, 128, 128, 0.06);
+  border-radius: 8px;
+}
+
+.testbar__main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.testbar__limit {
+  width: 110px;
+}
+
+.testbar__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+
 .alert {
   margin-bottom: var(--space-3);
 }
@@ -342,5 +509,13 @@ onMounted(load);
 
 :deep(.bad) {
   color: #d03050;
+}
+
+:deep(.ok) {
+  color: #18a058;
+}
+
+:deep(.warn) {
+  color: #f0a020;
 }
 </style>

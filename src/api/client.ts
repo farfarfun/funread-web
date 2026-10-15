@@ -12,6 +12,7 @@ import type {
   ExploreKind,
   ExplorePage,
   ExploreSourcePage,
+  ManagedUser,
   PoolPage,
   PoolSource,
   RssArticleDetail,
@@ -20,6 +21,8 @@ import type {
   RssFavorite,
   RssSourcePage,
   ScanReport,
+  SourceTestAccepted,
+  SourceTestProgress,
   SearchPage,
   SessionState,
   ShelfBook,
@@ -105,6 +108,11 @@ export const api = {
     request<SessionState>("/auth/admin/login", { method: "POST", ...json({ password }) }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 
+  //  人员管理。两个端点都要 ADMIN 身份，普通读者拿到的是 403。
+  users: () => request<ManagedUser[]>("/auth/users"),
+  updateUser: (user_id: number, patch: { role?: string; is_active?: boolean }) =>
+    request<ManagedUser>(`/auth/users/${user_id}`, { method: "PATCH", ...json(patch) }),
+
   // -------------------------------------------------------------- 小说
   search: (params: { keyword: string; limit?: number; offset?: number; max_sources?: number }) =>
     request<SearchPage>("/reader/search", { params }),
@@ -143,6 +151,16 @@ export const api = {
     url_id: number,
     payload: { enabled?: boolean; weight?: number; reset_failures?: boolean },
   ) => request<PoolSource>(`/pool/${source_type}/${url_id}`, { method: "PATCH", ...json(payload) }),
+
+  //  批量测试。202 立刻返回，进度轮询 testProgress。
+  testSources: (payload: { source_type?: SourceType; limit?: number; untested_only?: boolean }) =>
+    request<SourceTestAccepted>("/pool/test", { method: "POST", ...json(payload) }),
+  testProgress: (task_id: string) => request<SourceTestProgress>(`/pool/test/${task_id}`),
+  resetScores: (source_type: SourceType, url_id?: number) =>
+    request<{ reset: number }>(`/pool/test/${source_type}/scores`, {
+      method: "DELETE",
+      params: url_id === undefined ? {} : { url_id },
+    }),
 
   // -------------------------------------------------------------- 书架
   //  `group` 不传 = 整个书架，传空串 = 只看未分组的 —— 这两者在后端是不同的查询。

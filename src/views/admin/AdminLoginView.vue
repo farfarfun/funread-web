@@ -1,38 +1,31 @@
 <script setup lang="ts">
 /**
- * 管理端登录。单口令，和读者账号是两套凭据 —— 读者 cookie 打不开这里，
- * 管理 cookie 也不是一个读者身份。
+ * 管理端的「权限不足」页。
+ *
+ * 这里曾经是一个单口令登录页（`[auth] password`）。管理端改成按账号角色鉴权之后
+ * 那套口令不再能解锁管理端，所以这一页也不再收口令 —— 路由守卫只在**已经登录、
+ * 但不是管理员**时把人送到这儿。没登录的会被送去读者登录页，登完直接回管理端。
+ *
+ * 为什么要单独一页而不是弹个 toast 把人踢回阅读端：权限不足和没登录是两回事，
+ * 后者再登一次就好，前者登多少次都没用，得明确告诉人「找管理员提权」。
  */
-import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 
 import { useAuth } from "../../composables/useAuth";
 
-const route = useRoute();
 const router = useRouter();
-const message = useMessage();
 const auth = useAuth();
 
-const password = ref("");
-const submitting = ref(false);
+const username = computed(() => auth.username.value);
 
-const next = computed(() => String(route.query.next || "/admin/sources"));
+function toReader() {
+  router.replace("/web");
+}
 
-async function submit() {
-  submitting.value = true;
-  try {
-    const state = await auth.adminLogin(password.value);
-    if (!state?.auth_required) {
-      //  服务端没配口令，所有接口本来就是开放的 —— 直接放行，别卡在这一页。
-      message.info("服务端未配置管理口令，已直接进入");
-    }
-    router.replace(next.value);
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : "登录失败");
-  } finally {
-    submitting.value = false;
-  }
+async function switchAccount() {
+  await auth.logout();
+  router.replace({ name: "login", query: { next: "/admin/sources" } });
 }
 
 onMounted(() => auth.ensure());
@@ -41,33 +34,22 @@ onMounted(() => auth.ensure());
 <template>
   <div class="gate">
     <div class="gate__card">
-      <h1 class="gate__title">管理端</h1>
-      <p class="gate__subtitle">采集源管理。口令由 config.toml 的 [auth] password 配置。</p>
+      <h1 class="gate__title">需要管理员权限</h1>
+      <p class="gate__subtitle">
+        当前登录的是<strong>{{ username || "未知账号" }}</strong
+        >，它是访客账号，进不了采集源管理。<br />
+        找一位管理员在「人员管理」里把这个账号提成管理员即可。
+      </p>
 
-      <n-form @submit.prevent="submit">
-        <n-form-item label="口令" :show-feedback="false">
-          <n-input
-            v-model:value="password"
-            type="password"
-            show-password-on="click"
-            placeholder="管理口令"
-            :input-props="{ autocomplete: 'current-password' }"
-            @keyup.enter="submit"
-          />
-        </n-form-item>
-        <n-button
-          type="primary"
-          block
-          size="large"
-          class="gate__submit"
-          :loading="submitting"
-          attr-type="submit"
-        >
-          进入
-        </n-button>
-      </n-form>
+      <n-button type="primary" block size="large" @click="toReader">回到阅读端</n-button>
+      <n-button block size="large" class="gate__alt-btn" @click="switchAccount">
+        换个账号登录
+      </n-button>
 
-      <p class="gate__alt"><a href="/web">回到阅读端</a></p>
+      <p class="gate__hint">
+        一个管理员都没有时，可以在服务器上执行
+        <code>funread-api accounts create-admin &lt;用户名&gt;</code> 建一个。
+      </p>
     </div>
   </div>
 </template>
@@ -100,18 +82,22 @@ onMounted(() => auth.ensure());
   text-align: center;
 }
 
-.gate__submit {
-  margin-top: var(--space-4);
+.gate__alt-btn {
+  margin-top: var(--space-3);
 }
 
-.gate__alt {
+.gate__hint {
   margin: var(--space-5) 0 0;
   font-size: 12px;
+  line-height: 1.7;
   color: var(--text-muted);
   text-align: center;
 }
 
-.gate__alt a {
-  color: var(--accent);
+.gate__hint code {
+  padding: 1px 4px;
+  font-size: 11px;
+  background: var(--fill-weak, rgba(128, 128, 128, 0.14));
+  border-radius: 4px;
 }
 </style>

@@ -48,6 +48,7 @@ const themeOverrides: GlobalThemeOverrides = {
         <nav v-if="!$route.meta.bare" class="admin-nav">
           <RouterLink :to="{ name: 'admin-sources' }" class="admin-nav__item">采集源</RouterLink>
           <RouterLink :to="{ name: 'admin-pool' }" class="admin-nav__item">候选源池</RouterLink>
+          <RouterLink :to="{ name: 'admin-users' }" class="admin-nav__item">人员</RouterLink>
           <a class="admin-nav__item admin-nav__item--out" href="/web">回阅读端 ›</a>
         </nav>
         <RouterView :dark="dark" @toggle-theme="toggle" />

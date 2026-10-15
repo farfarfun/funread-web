@@ -129,6 +129,12 @@ const routes: RouteRecordRaw[] = [
         meta: { admin: true, title: "候选源池" },
       },
       {
+        path: "users",
+        name: "admin-users",
+        component: () => import("../views/admin/UsersView.vue"),
+        meta: { admin: true, title: "人员管理" },
+      },
+      {
         path: "login",
         name: "admin-login",
         component: () => import("../views/admin/AdminLoginView.vue"),
@@ -159,9 +165,13 @@ router.beforeEach(async (to) => {
   const state = await auth.ensure();
 
   if (to.meta.admin) {
-    //  管理端认的是单口令那套 session，读者账号不算。
+    //  管理端认**账号角色**：`state.admin` 现在等价于后端的 `require_reader_admin`，
+    //  两边同一个判据，不会出现「界面让进、接口全 403」。
     if (state?.admin) return true;
-    return { name: "admin-login", query: { next: to.fullPath } };
+    //  两种拒绝要分开。没登录的引导去登录，登完会回到这里；已经登录了的再登一次
+    //  也还是进不来 —— 那是权限不够，得明说，不能让人在登录页反复试。
+    if (state?.authenticated) return { name: "admin-login" };
+    return { name: "login", query: { next: to.fullPath } };
   }
 
   if (state?.authenticated) return true;

@@ -74,9 +74,28 @@ export interface PoolSource {
   needs_js: boolean;
   has_explore: boolean;
   fail_count: number;
-  /** 最近一次实跑成功。**这是唯一可信的可用性信号。** */
+  /** 主动批量测试的累计次数。 */
+  test_count: number;
+  test_ok_count: number;
+  /** `test_ok_count / test_count`。**候选池的第一排序键**；没测过时为 `null`。 */
+  success_rate: number | null;
+  /** 最近一次实跑成功。 */
   last_ok_at: string;
   last_error: string;
+}
+
+export interface SourceTestAccepted {
+  task_id: string;
+  queued: number;
+}
+
+export interface SourceTestProgress {
+  task_id: string;
+  state: "running" | "done" | "error";
+  total: number;
+  done: number;
+  failed: number;
+  detail: string;
 }
 
 export interface PoolPage {
@@ -120,6 +139,17 @@ export interface SessionState {
   local: boolean;
   /** funauth 角色（`admin` / `guest`）。未登录时 `null`。 */
   role: string | null;
+}
+
+/** 人员管理列表的一行。 */
+export interface ManagedUser {
+  user_id: number;
+  username: string;
+  /** `admin` 或 `guest`。 */
+  role: string;
+  is_active: boolean;
+  /** 是不是当前登录的这个人 —— 自己的角色和状态不允许自己改。 */
+  is_self: boolean;
 }
 
 export interface AccountSummary {
