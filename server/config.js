@@ -3,14 +3,23 @@
  *
  * Priority, highest first:
  *   1. an explicit CLI flag (--port / --backend / --base)
- *   2. the config file (--config, else the default path below)
- *   3. the FUNREAD_WEB_PORT / FUNREAD_API_BASE_URL environment variables
+ *   2. this service's config file (--config, else the default path below)
+ *   3. the shared root file ~/.farfarfun/funread/config.toml, section [web]
  *   4. the hardcoded defaults
  *
+ * No FUNREAD_* environment variable is read any more. Environment variables are
+ * the hardest layer to trace in a deployed service -- they live in no file, and
+ * a systemd unit, a shell profile or a deploy script could all be the source --
+ * so everything that used to be configured that way now goes in config.toml.
+ * Anything still exported is reported on startup, see DEPRECATED_ENV_VARS. This
+ * mirrors funread-api and the core library, which resolve the same four layers.
+ *
  * The config file defaults to ~/.farfarfun/funread/web/config.toml and is parsed
- * by extension (.toml / .json / .env). The PID and log files live next to
- * whichever config actually resolved -- so `stop` works from any directory, and
- * two instances driven by two configs keep independent state.
+ * by extension (.toml / .json / .env). The shared root file one level up holds
+ * what every funread service shares; this one holds what is this service's own.
+ * The PID and log files live next to whichever config actually resolved -- so
+ * `stop` works from any directory, and two instances driven by two configs keep
+ * independent state.
  *
  * That path is deliberately NOT under XDG_CONFIG_HOME: the directory also holds
  * the PID and log files, which are not "config" in the XDG sense. Honouring XDG
@@ -22,8 +31,9 @@
  * ${XDG_CONFIG_HOME:-~/.config}/farfarfun/funread-web/; it is moved across on
  * first run, see migrateLegacyState().
  *
- * FUNREAD_API_BASE_URL is deliberately the same variable vite.config.ts reads
- * for its dev proxy: one knob, so `pnpm dev` and the built CLI cannot drift.
+ * vite.config.ts still reads FUNREAD_API_BASE_URL for its dev proxy. That one
+ * stays: it is a build-time variable of the dev server, not runtime config of
+ * this service -- `pnpm dev` never goes through this file.
  */
 
 import fs from "node:fs";
@@ -51,6 +61,34 @@ export function stateDirFor() {
 
 function defaultConfigPath() {
   return path.join(stateDirFor(), "config.toml");
+}
+
+/**
+ * ~/.farfarfun/funread/config.toml -- the file every funread service reads, so
+ * the backend URL and friends only have to be written once. Deliberately one
+ * level above this service's own directory, which also holds its PID and log.
+ */
+export function sharedConfigPath() {
+  return path.join(os.homedir(), ORG_DIR, PRODUCT_DIR, "config.toml");
+}
+
+/** Env vars that are no longer read -> the config key that replaces each. */
+export const DEPRECATED_ENV_VARS = {
+  FUNREAD_WEB_PORT: "config.toml 的 [server] port",
+  FUNREAD_WEB_HOST: "config.toml 的 [server] host",
+  FUNREAD_API_BASE_URL: "config.toml 的 [server] backend",
+  FUNREAD_DATABASE_URL: "~/.farfarfun/funread/config.toml 的 [database] url",
+};
+
+/**
+ * Which deprecated variables are still set (blank doesn't count), as ready-made
+ * messages. Silently ignoring them would silently change behaviour on upgrade:
+ * a host that exported FUNREAD_WEB_PORT would quietly move to another port.
+ */
+export function describeIgnoredEnv(env = process.env) {
+  return Object.entries(DEPRECATED_ENV_VARS)
+    .filter(([name]) => (env[name] ?? "").trim() !== "")
+    .map(([name, replacement]) => `${name} 已不再被读取，请改用 ${replacement}`);
 }
 
 /**
@@ -164,7 +202,12 @@ function parseToml(text) {
 
 const KNOWN_KEYS = new Set(["port", "host", "backend", "base"]);
 
-/** Fold FUNREAD_WEB_PORT / PORT / port onto the same key, and drop the rest. */
+/**
+ * Fold the spellings a config file may use onto one key name: a `.env` file
+ * writes FUNREAD_WEB_PORT=, a .json may write PORT, TOML writes port. Unknown
+ * keys are dropped. (This is about keys *in a file* -- the environment itself is
+ * not read.)
+ */
 function normaliseKeys(raw) {
   const normalised = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -176,7 +219,7 @@ function normaliseKeys(raw) {
   return normalised;
 }
 
-function readConfig(configPath, explicit) {
+function readConfig(configPath, explicit, section = "server") {
   let text;
   try {
     text = fs.readFileSync(configPath, "utf8");
@@ -209,8 +252,11 @@ function readConfig(configPath, explicit) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigError(`config file ${configPath} must contain a mapping at the top level`);
   }
-  // A [server] table is accepted so a shared config can grow other sections.
-  const merged = raw.server && typeof raw.server === "object" ? { ...raw, ...raw.server } : raw;
+  // The named table wins over top-level keys, so one file can carry several
+  // services' settings: [server] in this service's own file, [web] in the
+  // shared root one.
+  const table = raw[section];
+  const merged = table && typeof table === "object" ? { ...raw, ...table } : raw;
   return normaliseKeys(merged);
 }
 
@@ -252,21 +298,35 @@ export function resolveSettings(flags = {}) {
   }
   const configPath = path.resolve(explicit ? flags.config : defaultConfigPath());
   const config = readConfig(configPath, explicit);
+  //  The shared root file is never "explicit", so a missing one is fine. Read
+  //  even when --config was given: that file holds this service's own settings,
+  //  this one holds what is shared, and both layers apply.
+  const sharedPath = sharedConfigPath();
+  const shared = sharedPath === configPath ? {} : readConfig(sharedPath, false, "web");
+
+  //  `pick` keeps "which file did this come from" attached to the value, so a
+  //  bad port names the file it is actually in rather than the nearest one.
+  const pick = (key) =>
+    config[key] !== undefined
+      ? { value: config[key], source: `config file ${configPath}` }
+      : shared[key] !== undefined
+        ? { value: shared[key], source: `config file ${sharedPath}` }
+        : { value: undefined, source: null };
 
   let port;
+  const configuredPort = pick("port");
   if (flags.port !== undefined && flags.port !== null) port = coercePort(flags.port, "--port");
-  else if (config.port !== undefined) port = coercePort(config.port, `config file ${configPath}`);
-  else if (process.env.FUNREAD_WEB_PORT) {
-    port = coercePort(process.env.FUNREAD_WEB_PORT, "FUNREAD_WEB_PORT");
+  else if (configuredPort.value !== undefined) {
+    port = coercePort(configuredPort.value, configuredPort.source);
   } else port = DEFAULT_PORT;
 
-  const host = flags.host ?? config.host ?? process.env.FUNREAD_WEB_HOST ?? DEFAULT_HOST;
+  const host = flags.host ?? pick("host").value ?? DEFAULT_HOST;
 
   let backend;
+  const configuredBackend = pick("backend");
   if (flags.backend) backend = normaliseBackend(flags.backend, "--backend");
-  else if (config.backend) backend = normaliseBackend(config.backend, `config file ${configPath}`);
-  else if (process.env.FUNREAD_API_BASE_URL) {
-    backend = normaliseBackend(process.env.FUNREAD_API_BASE_URL, "FUNREAD_API_BASE_URL");
+  else if (configuredBackend.value) {
+    backend = normaliseBackend(configuredBackend.value, configuredBackend.source);
   } else backend = DEFAULT_BACKEND;
 
   const stateDir = path.dirname(configPath);

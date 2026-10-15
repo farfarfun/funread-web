@@ -42,7 +42,7 @@ onMounted(() => auth.ensure());
   <div class="gate">
     <div class="gate__card">
       <h1 class="gate__title">管理端</h1>
-      <p class="gate__subtitle">采集源管理。口令由 FUNREAD_API_PASSWORD 配置。</p>
+      <p class="gate__subtitle">采集源管理。口令由 config.toml 的 [auth] password 配置。</p>
 
       <n-form @submit.prevent="submit">
         <n-form-item label="口令" :show-feedback="false">

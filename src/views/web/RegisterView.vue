@@ -31,8 +31,8 @@ const minLength = computed(() => summary.value?.min_password_length ?? 8);
 const isFirst = computed(() => Boolean(summary.value?.bootstrap));
 /**
  * 注册关着**也要**渲染首次运行那条路的表单 —— 服务端的 bootstrap 分支刻意不受
- * `FUNREAD_REGISTER_OPEN` 约束，在这边拦掉会让 `FUNREAD_REGISTER_OPEN=0` 的机器
- * 永远开不出第一个账号。
+ * `[auth] register_open` 约束，在这边拦掉会让把它设成 false 的机器永远开不出第一
+ * 个账号。
  */
 const closed = computed(
   () => Boolean(summary.value) && !summary.value?.register_open && !isFirst.value,
@@ -94,8 +94,9 @@ onMounted(async () => {
         <n-result status="info" title="注册未开放" size="small">
           <template #footer>
             <p class="gate__hint">
-              服务端设了 <code>FUNREAD_REGISTER_OPEN=0</code>。要放人进来，
-              先去掉这个设置，再用 <code>funread-api accounts invite</code> 签发一张邀请码。
+              服务端在 config.toml 里设了 <code>[auth] register_open = false</code>。
+              要放人进来，先去掉这个设置，再用
+              <code>funread-api accounts invite</code> 签发一张邀请码。
             </p>
             <n-button @click="router.replace({ name: 'login', query: { next } })">
               去登录

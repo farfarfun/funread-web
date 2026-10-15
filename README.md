@@ -12,7 +12,7 @@
 ```bash
 # 终端 A
 cd ../funread-api
-FUNREAD_DATABASE_URL="sqlite:////tmp/funread-dev.db" uv run funread-api
+uv run funread-api server run    # 库地址来自 ~/.farfarfun/funread/config.toml
 
 # 终端 B
 cd ../funread-web
@@ -20,8 +20,9 @@ pnpm install
 pnpm dev
 ```
 
-浏览器只请求同源 `/api`；Vite 默认转发到 `127.0.0.1:18811`。后端地址不同时，设置
-`FUNREAD_API_BASE_URL`。页面支持登记、筛选、排序、分页、启停、立即采集、重置刷新时间、
+浏览器只请求同源 `/api`；Vite 默认转发到 `127.0.0.1:18811`。后端地址不同时，`pnpm dev`
+下在 `.env.local` 里设 vite 的构建期变量 `FUNREAD_API_BASE_URL`；生产态服务端
+（`funread-web server run`）用 `--backend` 或 config.toml 的 `[server] backend`。页面支持登记、筛选、排序、分页、启停、立即采集、重置刷新时间、
 单条/批量删除以及操作队列反馈。
 
 ---

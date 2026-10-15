@@ -69,8 +69,8 @@ onMounted(() => auth.ensure());
         </n-button>
       </n-form>
 
-      <!-- isLocal 也放行：零账号那条路服务端不受 FUNREAD_REGISTER_OPEN 约束，
-           这边藏掉链接会让设了该变量的新机器永远开不出第一个账号。 -->
+      <!-- isLocal 也放行：零账号那条路服务端不受 [auth] register_open 约束，
+           这边藏掉链接会让关了注册的新机器永远开不出第一个账号。 -->
       <p v-if="auth.registerOpen.value || auth.isLocal.value" class="gate__alt">
         还没有账号？
         <RouterLink :to="{ name: 'register', query: { next } }">

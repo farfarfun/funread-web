@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { ConfigError, DEFAULT_BACKEND, DEFAULT_PORT, resolveSettings } from "../server/config.js";
+import {
+  ConfigError,
+  DEFAULT_BACKEND,
+  DEFAULT_PORT,
+  describeIgnoredEnv,
+  resolveSettings,
+} from "../server/config.js";
 
 let workdir;
 let savedEnv;
@@ -42,6 +48,14 @@ const write = (name, body) => {
   return target;
 };
 
+/** 写一份共享根配置到隔离出来的那个 HOME 下。 */
+const writeShared = (body) => {
+  const target = path.join(workdir, "home", ".farfarfun", "funread", "config.toml");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, body, "utf8");
+  return target;
+};
+
 describe("settings resolution", () => {
   it("falls back to the hardcoded defaults", () => {
     const settings = resolveSettings({});
@@ -62,12 +76,32 @@ describe("settings resolution", () => {
     assert.throws(() => resolveSettings({ config: path.join(workdir, "absent.toml") }), ConfigError);
   });
 
-  it("lets the environment beat the defaults", () => {
+  it("ignores the environment variables it used to read", () => {
+    // 钉住环境变量层的删除。这条红了说明有人把 process.env 加回了解析链 —— 而本套
+    // 测试对开发者真实配置的隔离，建立在"只有 HOME 影响解析"之上。
     process.env.FUNREAD_WEB_PORT = "9001";
+    process.env.FUNREAD_WEB_HOST = "10.0.0.5";
     process.env.FUNREAD_API_BASE_URL = "http://10.0.0.5:18811";
+
     const settings = resolveSettings({});
-    assert.equal(settings.port, 9001);
-    assert.equal(settings.backend, "http://10.0.0.5:18811");
+
+    assert.equal(settings.port, DEFAULT_PORT);
+    assert.equal(settings.backend, DEFAULT_BACKEND);
+  });
+
+  it("names the replacement key for a variable that is still set", () => {
+    process.env.FUNREAD_WEB_PORT = "9001";
+
+    const messages = describeIgnoredEnv();
+
+    assert.equal(messages.length, 1);
+    assert.match(messages[0], /FUNREAD_WEB_PORT/);
+    assert.match(messages[0], /\[server\] port/);
+  });
+
+  it("does not complain about a variable set to blank", () => {
+    process.env.FUNREAD_WEB_PORT = "  ";
+    assert.deepEqual(describeIgnoredEnv(), []);
   });
 
   for (const [name, body] of [
@@ -75,14 +109,39 @@ describe("settings resolution", () => {
     ["config.json", JSON.stringify({ port: 9002, backend: "http://10.0.0.6:1234" })],
     ["config.env", "FUNREAD_WEB_PORT=9002\nFUNREAD_API_BASE_URL=http://10.0.0.6:1234\n"],
   ]) {
-    it(`lets ${path.extname(name)} beat the environment`, () => {
-      process.env.FUNREAD_WEB_PORT = "9999";
-      process.env.FUNREAD_API_BASE_URL = "http://127.0.0.9:1";
+    it(`lets ${path.extname(name)} beat the defaults`, () => {
       const settings = resolveSettings({ config: write(name, body) });
       assert.equal(settings.port, 9002);
       assert.equal(settings.backend, "http://10.0.0.6:1234");
     });
   }
+
+  it("reads the [web] section of the shared root file", () => {
+    writeShared('[web]\nport = 9010\nbackend = "http://10.0.1.1:1234"\n');
+
+    const settings = resolveSettings({});
+
+    assert.equal(settings.port, 9010);
+    assert.equal(settings.backend, "http://10.0.1.1:1234");
+  });
+
+  it("lets this service's own file beat the shared root file", () => {
+    writeShared('[web]\nport = 9010\nbackend = "http://10.0.1.1:1234"\n');
+    const config = write("config.toml", "[server]\nport = 9011\n");
+
+    const settings = resolveSettings({ config });
+
+    assert.equal(settings.port, 9011);
+    //  backend 服务文件里没写，仍然从共享根文件兜到。
+    assert.equal(settings.backend, "http://10.0.1.1:1234");
+  });
+
+  it("blames the file a bad value is actually in", () => {
+    const shared = writeShared('[web]\nport = "http"\n');
+    const config = write("config.toml", "");
+
+    assert.throws(() => resolveSettings({ config }), new RegExp(shared.replace(/\./g, "\\.")));
+  });
 
   it("lets flags beat the config file", () => {
     const config = write("config.toml", 'port = 9002\nbackend = "http://10.0.0.6:1234"\n');

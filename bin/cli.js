@@ -17,7 +17,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { CLI_NAME, ConfigError, resolveSettings } from "../server/config.js";
+import { CLI_NAME, ConfigError, describeIgnoredEnv, resolveSettings } from "../server/config.js";
 import {
   LifecycleError,
   clearPid,
@@ -51,10 +51,14 @@ function usage() {
       "  --config PATH   config file (.toml/.json/.env); defaults to",
       "                  ~/.farfarfun/funread/web/config.toml.",
       "                  The PID and log files live in the same directory.",
-      `  --port N        listen port (default ${8811}, or FUNREAD_WEB_PORT)`,
-      "  --host ADDR     bind address (default 0.0.0.0, or FUNREAD_WEB_HOST)",
+      `  --port N        listen port (default ${8811}; or [server] port)`,
+      "  --host ADDR     bind address (default 0.0.0.0; or [server] host)",
       "  --backend URL   funread-api origin to reverse-proxy /api and /healthz to",
-      "                  (default http://127.0.0.1:18811, or FUNREAD_API_BASE_URL)",
+      "                  (default http://127.0.0.1:18811; or [server] backend)",
+      "",
+      "Settings resolve as: flag > the config file above > the [web] section of",
+      "~/.farfarfun/funread/config.toml > the defaults. No FUNREAD_* environment",
+      "variable is read.",
       "",
     ].join("\n"),
   );
@@ -176,7 +180,15 @@ async function serverCommand(action, flags) {
   return 0;
 }
 
+/** 把还设着的废弃环境变量喊出来。静默忽略等于升级时静默改行为。 */
+function warnIgnoredEnv() {
+  for (const message of describeIgnoredEnv()) {
+    process.stderr.write(`warning: ${message}\n`);
+  }
+}
+
 async function main(argv) {
+  warnIgnoredEnv();
   const command = argv[0];
   if (command === undefined || command === "-h" || command === "--help" || command === "help") {
     usage();
