@@ -28,6 +28,7 @@ import type { ShelfBook, ShelfGroup } from "../../api/types";
 import BookCover from "../../components/web/BookCover.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useAuth } from "../../composables/useAuth";
 import { useShortcuts } from "../../composables/useShortcuts";
 
 type ViewMode = "grid" | "list";
@@ -36,12 +37,20 @@ type SortKey = "recent" | "added" | "name";
 const VIEW_KEY = "funread.shelf.view";
 const SORT_KEY = "funread.shelf.sort";
 const GROUP_KEY = "funread.shelf.group";
+/**
+ * 书架内容缓存。`onActivated` 每次切回这个 tab 都要重新取，不缓存的话每次都先
+ * 闪一屏骨架。缓存只是**首屏垫底**，拿到真数据立刻覆盖。
+ *
+ * 键里带 `user_id`：书架是私有数据，共用一个键会让换账号后先看到上一个人的书。
+ */
+const CACHE_PREFIX = "funread.shelf.cache";
 
 /** 查更新的轮询间隔。一本书两个请求、后端还要礼貌停顿，没必要查太勤。 */
 const POLL_MS = 1500;
 
 const router = useRouter();
 const message = useMessage();
+const auth = useAuth();
 
 const books = ref<ShelfBook[]>([]);
 const groups = ref<ShelfGroup[]>([]);
@@ -117,19 +126,59 @@ const editableGroup = computed(() =>
 
 const unreadTotal = computed(() => books.value.reduce((sum, book) => sum + book.unread, 0));
 
+function cacheKey() {
+  return `${CACHE_PREFIX}.${auth.state.value?.user_id ?? "anon"}`;
+}
+
+function readCache(): { books: ShelfBook[]; groups: ShelfGroup[] } | null {
+  try {
+    const raw = localStorage.getItem(cacheKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    //  形状不对就当没有：这份数据是上个版本写的，结构可能已经变了。
+    if (!Array.isArray(parsed?.books) || !Array.isArray(parsed?.groups)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache() {
+  try {
+    localStorage.setItem(
+      cacheKey(),
+      JSON.stringify({ books: books.value, groups: groups.value }),
+    );
+  } catch {
+    //  配额满了就不缓存，功能本身不受影响。
+  }
+}
+
 async function load() {
-  loading.value = true;
+  //  有缓存就直接铺上去、跳过骨架屏；真数据回来再覆盖。
+  const cached = readCache();
+  if (cached) {
+    books.value = cached.books;
+    groups.value = cached.groups;
+    loading.value = false;
+  } else {
+    loading.value = true;
+  }
   error.value = "";
   try {
     const [shelf, shelfGroups] = await Promise.all([api.shelf(), api.shelfGroups()]);
     books.value = shelf;
     groups.value = shelfGroups;
+    writeCache();
     //  刚才停在的分组可能已经被解散/改名了，别把界面留在一个空列表上
     if (activeGroup.value !== null && !shelfGroups.some((g) => g.name === activeGroup.value)) {
       setGroup(null);
     }
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : "加载失败";
+    //  已经铺了缓存就别用错误盖掉它 —— 离线时能接着看书架比一行红字有用。
+    if (!cached) {
+      error.value = reason instanceof Error ? reason.message : "加载失败";
+    }
   } finally {
     loading.value = false;
   }
@@ -141,6 +190,7 @@ async function refresh() {
     const [shelf, shelfGroups] = await Promise.all([api.shelf(), api.shelfGroups()]);
     books.value = shelf;
     groups.value = shelfGroups;
+    writeCache();
   } catch {
     //  后台刷新失败就留着旧数据，不打断用户 —— 下次进页面还会再取。
   }
