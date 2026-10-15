@@ -23,7 +23,6 @@ import { api } from "../../api/client";
 import type {
   BookInfo,
   Chapter,
-  DownloadProgress,
   ShelfBook,
   SwitchCandidate,
   SwitchSourcePage,
@@ -34,10 +33,14 @@ import ChapterList from "../../components/web/ChapterList.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import {
+  cachedIndexes as readCachedIndexes,
+  clearBook,
+  writeChapter,
+} from "../../utils/offline";
 
-/** 一次下载的章节上限，和后端的 MAX_DOWNLOAD_CHAPTERS 对齐。 */
+/** 一次下载的章节上限。下载由客户端驱动，这个数只是别让人一口气排两千章。 */
 const DOWNLOAD_BATCH = 200;
-const POLL_MS = 1500;
 
 const route = useRoute();
 const router = useRouter();
@@ -51,7 +54,18 @@ const shelfBook = ref<ShelfBook | null>(null);
 const switchPage = ref<SwitchSourcePage | null>(null);
 const switchError = ref("");
 const cachedIndexes = ref<number[]>([]);
-const downloading = ref<DownloadProgress | null>(null);
+/**
+ * 本机下载进度。不复用 `DownloadProgress` —— 那是**服务端**后台任务的形状，带
+ * `task_id` 和 `detail`，而下载现在由客户端自己驱动，没有任务 id 可言，进度也
+ * 不需要轮询（就在本地循环里）。
+ */
+interface LocalDownload {
+  total: number;
+  done: number;
+  failed: number;
+}
+
+const downloading = ref<LocalDownload | null>(null);
 
 const loading = ref(true);
 const tocLoading = ref(false);
@@ -62,8 +76,6 @@ const reversed = ref(false);
 const chapterFilter = ref("");
 const showSources = ref(false);
 const sourcesLoading = ref(false);
-
-let pollTimer: number | undefined;
 
 const urlId = computed(() => {
   const fromQuery = Number(route.query.url_id);
@@ -206,54 +218,72 @@ async function switchTo(source: SwitchCandidate) {
   }
 }
 
+/**
+ * 已下载章节读的是**本机**离线存储。
+ *
+ * 不是服务端那层 `reader_chapter_cache` —— 那一层全局共享、用来避免重复打源站，
+ * 用户关心的则是「这台设备断网了还能不能读」，两者答案不同。
+ */
 async function refreshCache() {
-  try {
-    const state = await api.cached(bookKey.value);
-    cachedIndexes.value = state.chapter_indexes;
-    downloading.value = state.downloading;
-    if (state.downloading?.state === "running") schedulePoll();
-    else stopPoll();
-  } catch {
-    //  书不在架上时这是 404，属正常
-  }
-}
-
-function schedulePoll() {
-  stopPoll();
-  pollTimer = window.setTimeout(refreshCache, POLL_MS);
-}
-
-function stopPoll() {
-  if (pollTimer) window.clearTimeout(pollTimer);
-  pollTimer = undefined;
+  cachedIndexes.value = await readCachedIndexes(bookKey.value);
 }
 
 async function download() {
-  if (!chapters.value.length) return;
-  //  只排还没缓存的，并截到后端的批量上限
+  if (!chapters.value.length || downloading.value) return;
   const cached = new Set(cachedIndexes.value);
   const pending = chapters.value.filter((c) => !cached.has(c.index)).slice(0, DOWNLOAD_BATCH);
   if (!pending.length) {
-    message.info("这些章节都已经下载过了");
+    message.info("这些章节都已经下载到本机了");
     return;
   }
+
+  //  客户端驱动：逐章取回来存进 IndexedDB。服务端那层缓存会让第二次下载同一本
+  //  书（或换台设备下载）几乎瞬间完成 —— 命中就不会再去打源站。
+  //
+  //  并发压到 3：这些请求最终可能落到源站上，而书源很脆弱（实测 100 个里只有
+  //  21 个能跑通），一口气几十个并发是在给自己找封禁。
+  const concurrency = 3;
+  let done = 0;
+  let failed = 0;
+  downloading.value = { total: pending.length, done: 0, failed: 0 };
+
+  const queue = [...pending];
+  async function worker() {
+    for (;;) {
+      const chapter = queue.shift();
+      if (!chapter || !info.value) return;
+      try {
+        const content = await api.content({
+          url_id: urlId.value,
+          chapter,
+          book: info.value,
+          book_key: bookKey.value,
+        });
+        await writeChapter(bookKey.value, chapter.index, content);
+        done += 1;
+      } catch {
+        //  单章失败不该中断整本：源站抽风、某一章被删都很常见，
+        //  最后统一报个数，用户再点一次就只补没下到的那些。
+        failed += 1;
+      }
+      downloading.value = { total: pending.length, done: done + failed, failed };
+    }
+  }
+
   try {
-    const accepted = await api.download(bookKey.value, urlId.value, pending, 0.3);
-    message.success(`已排入 ${accepted.queued} 章，可以离线读了`);
+    await Promise.all(Array.from({ length: concurrency }, worker));
     await refreshCache();
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : "下载失败");
+    if (failed) message.warning(`下载完成，${done} 章成功，${failed} 章失败`);
+    else message.success(`已下载 ${done} 章到本机，可以离线读了`);
+  } finally {
+    downloading.value = null;
   }
 }
 
 async function clearCache() {
-  try {
-    await api.clearCache(bookKey.value);
-    cachedIndexes.value = [];
-    message.success("已清空缓存");
-  } catch (reason) {
-    message.error(reason instanceof Error ? reason.message : "清空失败");
-  }
+  await clearBook(bookKey.value);
+  cachedIndexes.value = [];
+  message.success("已清空本机缓存");
 }
 
 const tocAnchor = ref<HTMLElement | null>(null);
@@ -364,22 +394,22 @@ onMounted(loadInfo);
       <section v-if="onShelf" class="offline">
         <div class="offline__head">
           <span>离线下载</span>
-          <span class="offline__count">已缓存 {{ cachedIndexes.length }} 章</span>
+          <span class="offline__count">本机已下载 {{ cachedIndexes.length }} 章</span>
         </div>
         <n-progress
           v-if="downloading"
           type="line"
           :percentage="downloading.total ? Math.round((downloading.done / downloading.total) * 100) : 0"
-          :status="downloading.state === 'error' ? 'error' : 'default'"
+          :status="downloading.failed ? 'warning' : 'default'"
           :indicator-placement="'inside'"
         />
-        <p v-if="downloading?.state === 'error'" class="offline__error">
-          下载失败：{{ downloading.detail }}
+        <p v-if="downloading?.failed" class="offline__error">
+          有 {{ downloading.failed }} 章没取到，下载结束后再点一次只会补这些
         </p>
         <div class="offline__actions">
           <n-button
             size="small"
-            :disabled="downloading?.state === 'running'"
+            :disabled="Boolean(downloading)"
             @click="download"
           >
             <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>

@@ -16,7 +16,7 @@ import {
   ChevronBackOutline,
   ChevronForwardOutline,
 } from "@vicons/ionicons5";
-import { useMessage } from "naive-ui";
+import { useDialog, useMessage } from "naive-ui";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -34,6 +34,11 @@ import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderMenu from "../../components/web/ReaderMenu.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
+import {
+  cachedIndexes as readCachedIndexes,
+  readChapter,
+  writeChapter,
+} from "../../utils/offline";
 import { useAutoScroll } from "../../composables/useAutoScroll";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 import { useShortcuts } from "../../composables/useShortcuts";
@@ -48,6 +53,7 @@ const EDGE_RATIO = 0.25;
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
+const dialog = useDialog();
 const { settings, colors, contentStyle, paragraphStyle } = useReaderSettings();
 const { isTouch, isWide } = useViewport();
 
@@ -164,12 +170,9 @@ async function bootstrap() {
       ? Math.min(Math.max(0, requested), Math.max(0, chapters.value.length - 1))
       : (shelfBook.value?.progress?.chapter_index ?? 0);
 
-    if (onShelf.value) {
-      api
-        .cached(bookKey.value)
-        .then((state) => (cachedIndexes.value = state.chapter_indexes))
-        .catch(() => undefined);
-    }
+    //  已下载标记读的是**本机**的离线存储，不是服务端那层缓存 —— 用户关心的是
+    //  「这台设备断网了还能不能读」。不在书架的书也照样显示。
+    void readCachedIndexes(bookKey.value).then((list) => (cachedIndexes.value = list));
 
     await loadChapter(shelfBook.value?.progress?.char_offset ?? 0);
   } catch (reason) {
@@ -186,13 +189,23 @@ async function loadChapter(restoreOffset = 0) {
   error.value = "";
   content.value = null;
   try {
-    content.value = await api.content({
-      url_id: urlId.value,
-      chapter,
-      book: info.value,
-      //  带上 book_key，后端就会读写离线缓存 —— 飞行模式下靠这个。
-      book_key: bookKey.value,
-    });
+    //  **本机优先**。服务端那层缓存只能救「断外网不断内网」，真飞行模式下连不上
+    //  自己的服务器，只有存在这台设备上的才读得到。
+    const local = await readChapter(bookKey.value, chapter.index);
+    if (local) {
+      content.value = local;
+    } else {
+      content.value = await api.content({
+        url_id: urlId.value,
+        chapter,
+        book: info.value,
+        //  带上 book_key，服务端那层缓存也会跟着填 —— 下次换台设备读这一章
+        //  就不用再去打源站了。
+        book_key: bookKey.value,
+      });
+      //  存本机是顺带的，失败（配额满、隐私模式）不该影响这次阅读
+      void writeChapter(bookKey.value, chapter.index, content.value);
+    }
     //  内容渲染后再恢复位置，否则容器高度还是 0
     requestAnimationFrame(() => restore(restoreOffset));
     void save(restoreOffset, { immediate: true });
@@ -451,7 +464,39 @@ onMounted(() => {
 });
 
 function onVisibility() {
-  if (document.visibilityState === "hidden") flush();
+  if (document.visibilityState === "hidden") {
+    flush();
+    return;
+  }
+  void checkRemoteProgress();
+}
+
+/**
+ * 重新回到这一页时，看看别的设备有没有读到更后面。
+ *
+ * 进度是一人一本书**一条**记录、后写覆盖先写。顺序使用没问题，但有个很常见的
+ * 场景会咬人：这个标签页一直开着没关，人在手机上读到了第 100 章，回头碰一下这
+ * 个停在第 30 章的页面滚动一下 —— 旧进度就把新的盖掉了。
+ *
+ * 只问不跳。自动跳转会在「我就是想回头重读前面几章」时把人强行拽走，而那种
+ * 情况下服务端进度同样比本地靠后，程序分不出来，只有人能分。
+ */
+async function checkRemoteProgress() {
+  if (!onShelf.value || !chapters.value.length) return;
+  const shelf = await api.shelf().catch(() => null);
+  const remote = shelf?.find((item) => item.book_key === bookKey.value)?.progress;
+  if (!remote || remote.chapter_index === index.value) return;
+  const target = remote.chapter_index;
+  dialog.info({
+    title: "别处读到了新进度",
+    content: `另一台设备读到第 ${target + 1} 章，这一页停在第 ${index.value + 1} 章。`,
+    positiveText: "跳过去",
+    negativeText: "留在这里",
+    onPositiveClick: () => {
+      index.value = Math.min(Math.max(0, target), Math.max(0, chapters.value.length - 1));
+      void loadChapter(remote.char_offset ?? 0);
+    },
+  });
 }
 
 onBeforeUnmount(() => {
