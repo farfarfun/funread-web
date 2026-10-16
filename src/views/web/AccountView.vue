@@ -42,6 +42,12 @@ const books = ref<ShelfBook[]>([]);
 const cachedTotal = ref(0);
 const counting = ref(true);
 
+//  两种形态下「退出」的后果不一样：浏览器里是注销会话，打包版里是把这台设备的
+//  token 吊销掉。文案得跟着变，否则用户以为只是登出、下次打开才发现要重配。
+const logoutHint = packaged
+  ? "退出会吊销这台设备的 token，下次打开要重新填服务器地址和账号口令。确定吗？"
+  : "退出后书架和订阅需要重新登录才能看到，确定吗？";
+
 const cachedLabel = computed(() =>
   counting.value ? "统计中…" : `${cachedTotal.value} 章已缓存`,
 );
@@ -81,7 +87,7 @@ async function clearAllCache() {
 async function logout() {
   if (__FUNREAD_PACKAGED__) {
     //  打包版没有会话可注销，「退出」就是扔掉这台设备的 token。先吊销再清本地
-    //  ——  反过来的话就没有凭据可用来吊销了，服务端会留下一条谁也认不出来的
+    //  —— 反过来的话就没有凭据可用来吊销了，服务端会留下一条谁也认不出来的
     //  僵尸记录。吊销失败照样往下走：本地清掉至少这台设备看不到数据了，服务端
     //  那条用户可以在别的设备的「我的设备」里删。
     const session = loadSession();
@@ -221,10 +227,7 @@ onMounted(() => {
       </n-button>
       <n-popconfirm v-else-if="auth.authenticated.value" @positive-click="logout">
         <template #trigger><n-button block>退出登录</n-button></template>
-        <template v-if="packaged">
-          退出会吊销这台设备的 token，下次打开要重新填账号口令。确定吗？
-        </template>
-        <template v-else>退出后书架和订阅需要重新登录才能看到，确定吗？</template>
+        {{ logoutHint }}
       </n-popconfirm>
     </div>
   </div>
