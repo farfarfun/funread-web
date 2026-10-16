@@ -39,6 +39,10 @@ public class MainActivity extends BridgeActivity {
 
         //  暴露给页面的只有「回到启动页」这一个动作，读不到任何数据、改不了任何
         //  状态。即使用户的服务器被人塞了脚本，最多也只能把 app 弹回填地址的界面。
+        //
+        //  注入发生在 super.onCreate() 之后，也就是启动页那次 loadUrl 已经发出去
+        //  之后 —— 按 WebView 的约定，注入的对象要等下一次页面加载才可见。这里
+        //  正好不影响：启动页自己不用它，而用户服务器的页面必然是下一次加载。
         webView.addJavascriptInterface(new ShellBridge(), "FunreadShell");
 
         //  后注册的回调先收到事件，所以这里能稳稳盖住父类（如果将来它又加回
