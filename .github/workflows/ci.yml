@@ -479,10 +479,14 @@ jobs:
 
       #  两个 APK 的文件名都是 app-release.apk，直接传上去会撞名。按版本重命名，
       #  顺带让下载下来的文件自己说明是哪个版本、哪个 tag。
+      #
+      #  打包版的 APK 跟着桌面那边走同一套命名（版本不带 v、名字里带平台）。它不进
+      #  任何包仓库，这一条纯粹是为了同一个应用的六个附件别有两种写法 —— 一半
+      #  `funread-v1.1.125`、一半 `funread-1.1.125`，复制地址的时候很容易拼错。
       - name: name the apks
         run: |
           mkdir -p release
-          cp artifacts/packaged/app-release.apk "release/funread-${GITHUB_REF_NAME}.apk"
+          cp artifacts/packaged/app-release.apk "release/funread-${GITHUB_REF_NAME#v}-android.apk"
           cp artifacts/light/app-release.apk "release/funread-light-${GITHUB_REF_NAME}.apk"
           cp artifacts/desktop/* release/
           ls -l release
@@ -510,7 +514,7 @@ jobs:
 
           | 平台 | 打包版 | light |
           | --- | --- | --- |
-          | Android | `funread-<tag>.apk` | `funread-light-<tag>.apk` |
+          | Android | `funread-<ver>-android.apk` | `funread-light-<tag>.apk` |
           | Linux | `funread_<ver>_amd64.deb` / `funread-<ver>-linux-amd64.AppImage` / `.rpm` | `funread-light-<tag>-linux.AppImage` / `.deb` / `.rpm` |
           | Windows | `funread-<ver>-windows-amd64-setup.exe` / `-setup.msi` | `funread-light-<tag>-windows-setup.exe` / `.msi` |
           | macOS | `funread-<ver>-macos-arm64.dmg` / `-amd64.dmg` | `funread-light-<tag>-macos.dmg` |
