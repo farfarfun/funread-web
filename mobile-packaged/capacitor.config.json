@@ -1,0 +1,10 @@
+{
+  "appId": "com.farfarfun.funread",
+  "appName": "funread",
+  "webDir": "www",
+  "appendUserAgent": "FunreadPackaged",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

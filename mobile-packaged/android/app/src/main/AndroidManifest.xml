@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- android:usesCleartextTraffic
+         自建 funread 基本都跑在局域网的 http:// 上。API 28 起明文流量默认被
+         NetworkSecurityPolicy 挡掉，不开这一项 app 装上就是连不上，而且报错只
+         出现在 logcat 里。
+
+         打包版踩的点和 light 版不完全一样：light 是整窗口导航到用户服务器，
+         打包版是页面待在 http://localhost 上、用 fetch 去打用户服务器。两条路
+         都过 NetworkSecurityPolicy，都会被挡。
+
+         capacitor.config.json 的 server.cleartext 也能达到同样效果，但它是 CLI
+         写进 capacitor-cordova-android-plugins/ 那个生成目录的清单、再靠 manifest
+         merger 合进来的，而那个目录不进版本库。这里显式再写一遍，免得哪天
+         cap sync 的行为变了就悄无声息地失效。 -->
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

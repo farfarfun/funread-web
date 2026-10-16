@@ -4,6 +4,10 @@ dist/
 # 本地构建过一次打包版之后，`funread-web server run` 端出去的是带 token 逻辑
 # 的那一份 —— 它在浏览器里跑的话会去请求一个根本没配的服务器地址。
 dist-packaged/
+# 打包版 Capacitor 工程的 webDir 就是 dist-packaged/ 的一份副本（`npm run
+# build:www` 拷过去的）。它是构建产物，不进版本库 —— 否则每次改一行 Vue 代码，
+# 提交里都会多出一整套带 hash 的资源文件。
+mobile-packaged/www/
 *.tsbuildinfo
 .env.local
 .run/

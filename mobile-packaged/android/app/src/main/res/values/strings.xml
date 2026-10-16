@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">funread</string>
+    <string name="title_activity_main">funread</string>
+    <string name="package_name">com.farfarfun.funread</string>
+    <string name="custom_url_scheme">com.farfarfun.funread</string>
+</resources>

@@ -1,0 +1,19 @@
+{
+  "name": "funread-mobile-packaged",
+  "version": "0.1.0",
+  "private": true,
+  "description": "funread 打包版：Web 资源打进 app，跨站访问用户自建服务器，凭据是设备 token",
+  "scripts": {
+    "build:www": "npm --prefix .. run build:packaged && rm -rf www && cp -r ../dist-packaged www",
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "assemble:debug": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}
