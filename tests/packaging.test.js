@@ -7,15 +7,16 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
-//  仓库里的 Capacitor 工程，一个套壳版一个打包版。每加一个都要确认它没被圈进
-//  npm 包 —— 它们各自带一套几十兆的原生工程和 gradle wrapper。
-const NATIVE_DIRS = ["mobile", "mobile-packaged"];
+//  仓库里的客户端工程：Capacitor 两套（Android 的套壳版和打包版）、Tauri 两套
+//  （桌面的套壳版和打包版）。每加一个都要确认它没被圈进 npm 包 —— Capacitor 那两套
+//  各带一整套原生工程和 gradle wrapper，Tauri 那两套各带一个几千行的 Cargo.lock
+//  和一堆图标，还会在本地构建后留下几 GB 的 target/。
+const NATIVE_DIRS = ["mobile", "mobile-packaged", "desktop", "desktop-packaged"];
 
 /**
- * 这个仓库一身二用：既是 Vue 源码加两套 Capacitor 工程（mobile/、
- * mobile-packaged/），又是 @farfarfun/funread-web 这个 npm 包。两者唯一的隔离手段
- * 就是 package.json 的 files 白名单 —— 它一旦被删掉或者改成通配，那两套原生工程
- * 就会跟着发到 registry 上，而且发出去之前没有任何人会发现。
+ * 这个仓库一身二用：既是 Vue 源码加四套客户端工程，又是 @farfarfun/funread-web 这个
+ * npm 包。两者唯一的隔离手段就是 package.json 的 files 白名单 —— 它一旦被删掉或者
+ * 改成通配，那四套工程就会跟着发到 registry 上，而且发出去之前没有任何人会发现。
  */
 describe("npm 发布范围", () => {
   it("files 是白名单，没写进去的一律不进 tarball", () => {
@@ -27,7 +28,7 @@ describe("npm 发布范围", () => {
     }
   });
 
-  it("两套 Capacitor 工程都不在发布范围内", () => {
+  it("四套客户端工程都不在发布范围内", () => {
     const tops = pkg.files.map((entry) => entry.replace(/^\.\//, "").split("/")[0]);
     for (const dir of NATIVE_DIRS) {
       assert.ok(!tops.includes(dir), `${dir}/ 是源码，不是 npm 包的运行时内容`);

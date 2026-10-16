@@ -59,9 +59,18 @@ Android 两份产物上 —— 和 `../src/api/packaged.ts` 顶部拒绝引 `@ca
 - 不带 cookie。打包版的凭据本来就是设备 token，后端 `allow_credentials=False` 也不
   接受 cookie。
 
-注入的脚本单独放一个 `.js` 文件而不是写成 Rust 里的字符串字面量，是为了 CI 能对它跑
-`node --check`：**里面写错一个字不会让任何一步构建失败**，只会出一个装上之后每个请求
-都报错的包。
+注入的脚本单独放一个 `.js` 文件而不是写成 Rust 里的字符串字面量，是为了它能被**真正
+跑起来验**：**里面写错一个字不会让任何一步构建失败**，只会出一个装上之后每个请求都
+报错的包。
+
+`../tests/desktop.test.js` 把 `window` / `location` 当参数喂进这段 IIFE、把 Tauri 那条
+命令换成假的，于是整条链路能在 `node --test` 里真跑一遍 —— 200/401/204、Authorization
+和请求体的转发、原生报错要包成 `TypeError`、本地资源不绕 IPC、重复注入不套两层。
+同一个文件还交叉核对了 JS 和 Rust 之间那几个靠字符串对上的名字（命令名、菜单项 id），
+它们对不上同样不会让任何一步构建失败。
+
+**Rust 那一半（`proxy_fetch`）没有单元测试**：它要和 tauri 一起编译，而 tauri 在
+Linux 上要 WebKitGTK 的开发库。那一半只有 CI 的编译保证。
 
 ## 认证：Bearer，不是 cookie
 

@@ -96,7 +96,13 @@ cargo tauri build --bundles deb,appimage
 ## CI 与签名
 
 `.github/workflows/ci.yml` 的 `desktop` job。Linux 和 Windows 每次 push 都构建，
-**macOS 只在打 `v*` tag 时构建**（runner 按 10 倍计费）。
+**macOS 只在打 `v*` tag 时构建**（runner 按 10 倍计费）。要在非 tag 上验一次 macOS：
+手动跑 workflow 时把 `desktop_macos` 勾上。
+
+CI 不跑 GUI，所以启动页只过 `node --check`。另外 `../tests/desktop.test.js` 交叉核对了
+启动页 `invoke()` 的命令名和 `main.rs` 里 `generate_handler!` 注册的那些、菜单项 id 和
+它的处理分支、以及「切换服务器」和 `?setup=1` 这一对 —— 这些两边对不上都**不会**让
+任何一步构建失败，只会出一个「按了没反应」的安装包。
 
 **所有产物都没有签名**，也没有做 macOS 公证。用户第一次打开要绕过系统拦截：
 
