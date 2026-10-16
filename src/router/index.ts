@@ -96,6 +96,14 @@ const routes: RouteRecordRaw[] = [
         meta: { tab: "account", title: "我的" },
       },
       {
+        //  设备 token 的管理。两种形态下都要有：打包版里管的是自己，浏览器里
+        //  管的是别处那些 —— 手机丢了的时候，能操作的设备恰恰不是手机。
+        path: "devices",
+        name: "devices",
+        component: () => import("../views/web/DevicesView.vue"),
+        meta: { tab: "account", title: "我的设备" },
+      },
+      {
         path: "login",
         name: "login",
         component: () => import("../views/web/LoginView.vue"),

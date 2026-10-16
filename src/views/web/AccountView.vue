@@ -162,6 +162,13 @@ onMounted(() => {
         <div class="row"><span>订阅源目录</span></div>
       </n-list-item>
 
+      <n-list-item @click="router.push({ name: 'devices' })">
+        <div class="row">
+          <span>我的设备</span>
+          <span class="row__value">手机丢了在这里吊销</span>
+        </div>
+      </n-list-item>
+
       <n-list-item v-if="inShell">
         <div class="row">
           <span>切换服务器</span>
