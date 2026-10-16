@@ -223,16 +223,20 @@ jobs:
         run: |
           set -euo pipefail
           free='[
-            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":""},
-            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":""},
-            {"app":"funread-light","project":"desktop","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":""},
-            {"app":"funread","project":"desktop-packaged","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":""}
+            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":"","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":"","args2":""},
+            {"app":"funread-light","project":"desktop","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":"","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":"","args2":""}
           ]'
-          #  universal 而不是分别出两份：一次构建两个架构，还是一台 runner 的钱，
-          #  下载的人也不用分辨自己是 Intel 还是 Apple Silicon。
+          #  light 出 universal：下载的人不用分辨自己是 Intel 还是 Apple Silicon。
+          #
+          #  打包版相反，必须分架构出两个 DMG —— cask 的 url 里有 `#{arch}` 这一段，
+          #  两个架构缺一个，farfarfun/packages 那边整份 cask 都不生成。
+          #  `args2` 是同一条 job 里的第二趟构建，不是第二台 runner，理由见下面
+          #  那两个构建步骤之间的注释。
           paid='[
-            {"app":"funread-light","project":"desktop","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin"},
-            {"app":"funread","project":"desktop-packaged","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin"}
+            {"app":"funread-light","project":"desktop","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target aarch64-apple-darwin","args2":"--target x86_64-apple-darwin"}
           ]'
           if [[ "$GITHUB_REF" == refs/tags/v* || "${FORCE_MACOS:-false}" == "true" ]]; then
             include=$(jq -cn --argjson a "$free" --argjson b "$paid" '$a + $b')
@@ -314,7 +318,8 @@ jobs:
           grep -q "Authorization" dist-packaged/assets/*.js
           grep -q "funread.packaged.session" dist-packaged/assets/*.js
 
-      - uses: tauri-apps/tauri-action@v1
+      - name: build
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
@@ -322,6 +327,29 @@ jobs:
           #  只给 tagName / releaseName 之外的参数，这个 action 就只构建、不发版。
           #  产物的改名和上传在下面自己做 —— 要的名字一眼能看出平台和形态。
           args: --bundles ${{ matrix.bundles }} ${{ matrix.args }}
+
+      #  只有 macOS 打包版有第二趟：`tauri build` 一次只认一个 --target，而 cask
+      #  要 arm64 和 amd64 两个 DMG。
+      #
+      #  为什么是同一条 job 编两次，而不是把架构拆成矩阵的第三维（两台 macOS
+      #  runner 并行）：
+      #
+      #  - **省不出编译时间。** 原来那个 universal 包本来就是两个架构各编一遍再
+      #    lipo 到一起，拆成两条 job 并不会少编什么，只会在按 10 倍计费的 runner 上
+      #    再付一次 checkout、Node、pnpm、Rust 工具链和依赖下载的启动开销。
+      #  - **rust-cache 的键会撞。** 它按 `<工程>-<平台>` 存，两条并行的 job 会抢同
+      #    一个键，谁后写谁覆盖，缓存里永远只剩半个架构。给键再加一维就是两份几 GB
+      #    的缓存，而仓库总共只有 10 GB 额度。
+      #  - 代价是这条 job 的墙上时间约等于原来 universal 的，没有变长，只是没能借着
+      #    这次改动变短。macOS 只在打 tag 时跑，不值得为它多开一台 runner。
+      - name: build (第二个 macOS 架构)
+        if: matrix.args2 != ''
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: ${{ matrix.project }}
+          args: --bundles ${{ matrix.bundles }} ${{ matrix.args2 }}
 
       #  Tauri 出来的名字是 `funread-light_1.1.124_amd64.AppImage` 这种，三个平台
       #  各不相同，而且不带 tag。在这里统一改名，两套规则见本文件头注释：light 还是
