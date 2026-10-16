@@ -1,0 +1,19 @@
+{
+  "name": "funread-mobile-light",
+  "version": "0.1.0",
+  "private": true,
+  "description": "funread light: Capacitor 套壳，直接加载用户自建服务器的页面",
+  "scripts": {
+    "sync": "cap sync",
+    "sync:android": "cap sync android",
+    "open:android": "cap open android",
+    "assemble:debug": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}

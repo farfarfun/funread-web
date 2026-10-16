@@ -1,0 +1,14 @@
+{
+  "appId": "com.farfarfun.funread.light",
+  "appName": "funread light",
+  "webDir": "www",
+  "appendUserAgent": "FunreadLight",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "webContentsDebuggingEnabled": true
+  }
+}
