@@ -7,8 +7,5 @@
     "androidScheme": "http",
     "cleartext": true,
     "allowNavigation": ["*"]
-  },
-  "android": {
-    "webContentsDebuggingEnabled": true
   }
 }
