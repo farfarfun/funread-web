@@ -32,6 +32,7 @@ android {
     signingConfigs {
         release {
             def ks = rootProject.file('../../release.keystore')
+            println "[funread] keystore=${ks.absolutePath} exists=${ks.exists()}"
             if (ks.exists()) {
                 storeFile ks
                 storePassword 'funread'
