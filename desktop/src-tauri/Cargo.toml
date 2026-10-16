@@ -1,0 +1,30 @@
+[package]
+name = "funread-light-desktop"
+version = "0.0.0"
+description = "funread light 桌面壳：打开你自己那台 funread 服务器上的页面"
+authors = ["farfarfun"]
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+
+#  版本号不写在这里：它由 tauri.conf.json 的 `version` 指到仓库根的 package.json，
+#  整个仓库只有那一处需要 bump。Cargo 这边留 0.0.0。
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+#  只有 tauri 和 serde。探活走标准库的 TcpStream，不引 HTTP 客户端 —— light 版
+#  自己一个 HTTP 请求都不发（页面来源就是用户的服务器，请求由 WebView 直接发出），
+#  需要的只是「那个 host:port 上有没有人在听」这一件事。
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+#  自托管小工具，体积比编译时间重要：LTO + 单 codegen unit + strip 把壳压到个位数
+#  MB，这正是选 Tauri 而不是 Electron 的那条理由的延续。
+#  不加 panic = "abort"：wry 在 macOS 上要靠 unwind 把 Objective-C 异常接住。
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

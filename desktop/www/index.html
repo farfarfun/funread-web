@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>funread light</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --text: #16181d;
+        --muted: #6b7280;
+        --line: #e3e5ea;
+        --accent: #2f6df6;
+        --danger: #d93025;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0c10;
+          --card: #16181d;
+          --text: #e9eaee;
+          --muted: #9aa0ab;
+          --line: #262a32;
+          --accent: #5b8cff;
+          --danger: #ff6b60;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        margin: 0;
+        padding: 40px 24px 24px;
+        font-family: -apple-system, "Segoe UI", "Noto Sans CJK SC", "Source Han Sans SC",
+          "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      /* 桌面窗口可以很宽，但表单拉满一屏只会更难读。 */
+      .sheet {
+        width: 100%;
+        max-width: 520px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      .lede {
+        margin: 0 0 24px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input {
+        width: 100%;
+        padding: 11px 13px;
+        font-family: inherit;
+        font-size: 15px;
+        color: var(--text);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      input:focus {
+        border-color: var(--accent);
+        outline: none;
+      }
+
+      button {
+        padding: 10px 16px;
+        font-family: inherit;
+        font-size: 14px;
+        color: #fff;
+        cursor: pointer;
+        background: var(--accent);
+        border: none;
+        border-radius: 8px;
+      }
+
+      button[disabled] {
+        cursor: default;
+        opacity: 0.6;
+      }
+
+      button.ghost {
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid var(--line);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .hint {
+        min-height: 20px;
+        margin: 14px 0 0;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--muted);
+        white-space: pre-line;
+      }
+
+      .hint[data-tone="error"] {
+        color: var(--danger);
+      }
+
+      .recent {
+        margin-top: 28px;
+      }
+
+      .recent__title {
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .recent__item {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 12px;
+        margin-bottom: 8px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .recent__url {
+        /* 它是个 <button>（要能点、要能键盘聚焦），但上面那条通用 button 样式
+           会把它涂成一整条蓝色按钮，这里按“一行文字”重置回来。 */
+        flex: 1;
+        padding: 0;
+        overflow: hidden;
+        font-size: 14px;
+        color: inherit;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        background: transparent;
+        border: none;
+      }
+
+      .recent__drop {
+        padding: 5px 10px;
+        font-size: 12px;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+
+      footer {
+        margin-top: auto;
+        padding-top: 28px;
+        font-size: 12px;
+        line-height: 1.8;
+        color: var(--muted);
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <h1>连接到你的 funread</h1>
+      <p class="lede">
+        funread light 不自带书库，它打开的是你自己那台服务器上的页面。
+        填上 funread-web 的地址，比如 <code>http://192.168.1.10:8811</code>。
+      </p>
+
+      <form id="form" autocomplete="off">
+        <label for="url">服务器地址</label>
+        <!-- 不用 type="url"：浏览器会按“绝对 URL”校验，用户敲的
+             `192.168.1.10:8811` 直接被拦在提交之前，下面那段自动补 http:// 的
+             逻辑根本没机会跑。校验自己来，报错也能说人话。 -->
+        <input
+          id="url"
+          name="url"
+          type="text"
+          inputmode="url"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="http://192.168.1.10:8811"
+        />
+        <div class="actions">
+          <button id="connect" type="submit">连接</button>
+          <button id="anyway" type="button" class="ghost" hidden>仍然打开</button>
+          <button id="cancel" type="button" class="ghost" hidden>返回当前服务器</button>
+        </div>
+        <p id="hint" class="hint" role="status" aria-live="polite"></p>
+      </form>
+
+      <section id="recent" class="recent" hidden>
+        <p class="recent__title">用过的地址</p>
+        <div id="recentList"></div>
+      </section>
+
+      <footer>
+        连接后页面来自你的服务器，登录状态、离线缓存都和在浏览器里打开一模一样。<br />
+        想换一台服务器：菜单栏「文件 → 切换服务器」（<code>Ctrl/Cmd + Shift + S</code>）。
+      </footer>
+    </div>
+
+    <script src="./launcher.js" defer></script>
+  </body>
+</html>
