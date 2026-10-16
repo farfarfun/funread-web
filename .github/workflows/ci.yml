@@ -520,6 +520,9 @@ jobs:
           `amd64` 给 Intel。light 的 dmg 还是 universal 包，两种芯片通用。桌面端只在
           打 tag 时才构建 macOS，所以个别版本可能没有 dmg。
 
+          `SHA256SUMS` 覆盖上面所有附件。下完校验一下：
+          `sha256sum -c SHA256SUMS --ignore-missing`。
+
           ## 所有产物都没有签名
 
           这是个自托管小工具，没有买任何一家的开发者证书。系统会拦，绕过的方法：
@@ -564,6 +567,23 @@ jobs:
           #  两个占位符：light 的名字里是整个 tag，打包版的名字里是去掉 v 的版本号。
           sed -i "s/<tag>/${GITHUB_REF_NAME}/g; s/<ver>/${GITHUB_REF_NAME#v}/g" release-notes.md
           cat release-notes.md
+
+      #  规范 1.3：release 里要有一个名字就叫 SHA256SUMS 的附件，覆盖这次发布的
+      #  所有文件。它是 formula 和 cask 校验和的**唯一来源** —— 没有它，cask 一行
+      #  都生成不出来。
+      #
+      #  这一步必须排在所有往 release/ 里放东西的步骤之后、上传之前：先算完校验和
+      #  再传别的附件，后传的那些就不在清单里，而下游报的是「附件里缺 xxx.dmg」，
+      #  看着像构建矩阵出了岔子。
+      - name: checksums
+        run: |
+          set -euo pipefail
+          #  清单不能把它自己算进去。先删掉可能已经存在的那份，再写到上一层算完移
+          #  回来 —— 「glob 在重定向之前展开」这种顺序上的细节不该是正确性的依据。
+          rm -f release/SHA256SUMS
+          (cd release && sha256sum -- * >../SHA256SUMS)
+          mv SHA256SUMS release/
+          cat release/SHA256SUMS
 
       #  重跑同一个 tag 时 `gh release create` 会因为已存在而失败，所以分两条路。
       - name: publish
