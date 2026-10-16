@@ -1,9 +1,11 @@
-#  四条流水线放一个文件里：
+#  一个文件里放下所有流水线：
 #
-#  - web            仓库本来就有的东西（Vue 构建 + server 的单元测试）
-#  - android        mobile/ 下的 funread light 套壳
+#  - web               仓库本来就有的东西（Vue 构建 + server 的单元测试）
+#  - android           mobile/ 下的 funread light 套壳
 #  - android-packaged  mobile-packaged/ 下的打包版
-#  - release        打 v* tag 时把两个 APK 传到 GitHub Release 上
+#  - desktop-matrix    按「是不是 tag」决定桌面端要不要带上 macOS
+#  - desktop           desktop/ 与 desktop-packaged/ 下的两个 Tauri 工程
+#  - release           打 v* tag 时把 APK 和桌面产物一起传到 GitHub Release 上
 #
 #  前两个 job 故意不互相依赖：light 版的 APK 里**不打包** dist/，它运行时直接去
 #  加载用户自己服务器上的页面，Vue 构建不是它出包的前置条件。打包版正相反 ——
@@ -22,6 +24,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      desktop_macos:
+        description: "桌面端也构建 macOS（平时只在 v* tag 上跑，runner 按 10 倍计费）"
+        type: boolean
+        default: false
 
 jobs:
   web:
@@ -185,11 +192,183 @@ jobs:
           path: mobile-packaged/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+  #  桌面端的矩阵是算出来的，不是写死的：Linux 和 Windows runner 对公开仓库免费，
+  #  每次 push 都跑；macOS runner 按 10 倍计费，**只在 tag 上跑**。
+  #
+  #  GitHub 的 matrix 没有「按条件去掉某一项」的写法（job 级的 if 要么整条不跑），
+  #  所以用一个几秒钟的 job 把 include 数组算出来，下面 fromJSON 进去。
+  desktop-matrix:
+    name: desktop (挑平台)
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          #  手动勾一下就能在非 tag 上验一次 macOS。没有这个开关的话，macOS 那条
+          #  路径第一次真正执行就是在打 tag 的时候 —— 它要是坏的，坏掉的是发版。
+          FORCE_MACOS: ${{ inputs.desktop_macos }}
+        run: |
+          set -euo pipefail
+          free='[
+            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":""},
+            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":""},
+            {"app":"funread-light","project":"desktop","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":""},
+            {"app":"funread","project":"desktop-packaged","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":""}
+          ]'
+          #  universal 而不是分别出两份：一次构建两个架构，还是一台 runner 的钱，
+          #  下载的人也不用分辨自己是 Intel 还是 Apple Silicon。
+          paid='[
+            {"app":"funread-light","project":"desktop","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin"},
+            {"app":"funread","project":"desktop-packaged","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin"}
+          ]'
+          if [[ "$GITHUB_REF" == refs/tags/v* || "${FORCE_MACOS:-false}" == "true" ]]; then
+            include=$(jq -cn --argjson a "$free" --argjson b "$paid" '$a + $b')
+          else
+            include=$(jq -cn --argjson a "$free" '$a')
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+          echo "$include" | jq .
+
+  desktop:
+    name: desktop (${{ matrix.app }} · ${{ matrix.platform }})
+    needs: desktop-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.desktop-matrix.outputs.include) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      #  两段注入进 WebView 的脚本。它们是静态资源，Rust 这边只是 include_str! /
+      #  原样打包 —— 里面写错一个字照样出一个「构建成功」的安装包，装上才发现是
+      #  白屏或者每个请求都报错。（和 android job 里那条 check launcher syntax 同理。）
+      #
+      #  真正的行为验证在 web job 的 tests/desktop.test.js 里：fetch 桥整条链路都
+      #  在 node --test 里跑过，命令名和菜单项 id 也和 Rust 那边交叉核对过。这两行
+      #  只是让语法错误在**本条** job 里就断掉，不用等一轮 Rust 编译。
+      - name: check injected scripts
+        run: |
+          node --check desktop/www/launcher.js
+          node --check desktop-packaged/src-tauri/src/fetch-bridge.js
+
+      #  Tauri 2 在 Linux 上用的是系统的 WebKitGTK（4.1，不是 v1 时代的 4.0）。
+      #  ubuntu-22.04 是第一个标准源里就有 4.1 的 LTS，也因此是 AppImage 的 glibc
+      #  基线 —— 在更新的发行版上构建出来的包，老系统装不上。
+      - name: install linux deps
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf xdg-utils libfuse2 libssl-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          #  macOS 出 universal 包要两个架构的 std，少一个 cargo 直接报 target 没装。
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.project }} -> target
+          #  两个工程的依赖树几乎一样但不完全一样（打包版多一棵 reqwest），
+          #  平台之间更是毫无关系。缓存键必须把这两维都带上。
+          key: ${{ matrix.project }}-${{ matrix.platform }}
+
+      #  打包版装进 app 的就是 Vue 的构建产物，所以 Web 构建是出包的前置条件。
+      #  light 版正相反：它运行时才去加载用户服务器上的页面，这一步对它是多余的。
+      - name: build packaged web assets
+        if: matrix.project == 'desktop-packaged'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build:packaged
+
+      #  和 android-packaged 里那两行是同一个断言：漏掉 `--mode packaged` 不会让
+      #  上面任何一步失败，只会出一份「同源 /api」的包 —— 装上页面照样打得开，
+      #  每个请求都是 404。
+      - name: assert packaged bundle
+        if: matrix.project == 'desktop-packaged'
+        shell: bash
+        run: |
+          grep -q "Authorization" dist-packaged/assets/*.js
+          grep -q "funread.packaged.session" dist-packaged/assets/*.js
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: ${{ matrix.project }}
+          #  只给 tagName / releaseName 之外的参数，这个 action 就只构建、不发版。
+          #  产物的改名和上传在下面自己做 —— 要的名字一眼能看出平台和形态。
+          args: --bundles ${{ matrix.bundles }} ${{ matrix.args }}
+
+      #  Tauri 出来的名字是 `funread-light_1.1.124_amd64.AppImage` 这种，三个平台
+      #  各不相同，而且不带 tag。统一改成 `<形态>-<tag>-<平台>.<后缀>`：下载下来的
+      #  文件自己说明是哪个版本、哪个平台、哪一种形态。
+      - name: name the bundles
+        shell: bash
+        env:
+          APP: ${{ matrix.app }}
+          PLATFORM: ${{ matrix.platform }}
+          PROJECT: ${{ matrix.project }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) VERSION="v0.0.0-dev" ;;
+          esac
+
+          mkdir -p release
+          found=0
+          while IFS= read -r path; do
+            case "$(basename "$path")" in
+              *.AppImage)  out="${APP}-${VERSION}-${PLATFORM}.AppImage" ;;
+              *.deb)       out="${APP}-${VERSION}-${PLATFORM}.deb" ;;
+              *.rpm)       out="${APP}-${VERSION}-${PLATFORM}.rpm" ;;
+              *.msi)       out="${APP}-${VERSION}-${PLATFORM}.msi" ;;
+              *-setup.exe) out="${APP}-${VERSION}-${PLATFORM}-setup.exe" ;;
+              *.dmg)       out="${APP}-${VERSION}-${PLATFORM}.dmg" ;;
+              #  bundle 目录里还有一堆别的 .exe（NSIS 自己的中间产物之类），
+              #  不在上面名单里的一律不要。
+              *) continue ;;
+            esac
+            cp "$path" "release/$out"
+            found=$((found + 1))
+          done < <(find "${PROJECT}/src-tauri/target" -type f -path '*/release/bundle/*' \
+                     \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \
+                        -o -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \))
+
+          #  找不到产物说明 tauri build 的输出路径变了，而它自己是「成功」的 ——
+          #  不在这里拦住，release job 会拿到一个空目录然后发出一个缺文件的版本。
+          if [ "$found" -eq 0 ]; then
+            echo "没有在 ${PROJECT}/src-tauri/target 下找到任何安装包"
+            find "${PROJECT}/src-tauri/target" -maxdepth 4 -type d -name bundle || true
+            exit 1
+          fi
+          ls -l release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.app }}-${{ matrix.platform }}
+          path: release/*
+          if-no-files-found: error
+
   release:
     name: release (v* tag)
-    #  只在 tag 上跑。master 上的每次 push 也会走完上面三条，但不该发版。
+    #  只在 tag 上跑。master 上的每次 push 也会走完上面几条，但不该发版。
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [web, android, android-packaged]
+    needs: [web, android, android-packaged, desktop]
     runs-on: ubuntu-latest
     permissions:
       #  默认的 GITHUB_TOKEN 只读，建 Release 要写。只在这一条 job 上放开。
@@ -207,56 +386,93 @@ jobs:
           name: funread-packaged-apk
           path: artifacts/packaged
 
-      #  两个 APK 的文件名都是 app-debug.apk，直接传上去会撞名。按版本重命名，
+      #  桌面端的名字在 desktop job 里就排好了（含 tag 和平台），这里原样收进来。
+      #  按 pattern 拿而不是逐个写死：矩阵会变（比如将来加 arm64），写死就会漏。
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: artifacts/desktop
+
+      #  两个 APK 的文件名都是 app-release.apk，直接传上去会撞名。按版本重命名，
       #  顺带让下载下来的文件自己说明是哪个版本、哪个 tag。
       - name: name the apks
         run: |
           mkdir -p release
           cp artifacts/packaged/app-release.apk "release/funread-${GITHUB_REF_NAME}.apk"
           cp artifacts/light/app-release.apk "release/funread-light-${GITHUB_REF_NAME}.apk"
+          cp artifacts/desktop/* release/
           ls -l release
 
       - name: write release notes
         run: |
           cat > release-notes.md <<'NOTES'
-          两个 Android 客户端，**包名不同，可以装在同一台手机上对比**。两个都是
-          debug 签名的 APK，装之前要在系统里允许「安装未知来源的应用」。
+          funread 是自托管的，没有官方服务器 —— **所有客户端装上之后第一件事都是问你
+          自己那台服务器的地址**。
 
-          funread 是自托管的，没有官方服务器 —— 两个版本装上之后第一件事都是问你
-          自己那台服务器的地址。
+          每个平台都有两种形态，标识符不同，可以装在同一台设备上对比：
 
           | | funread（打包版） | funread light |
           | --- | --- | --- |
-          | 文件 | `funread-<tag>.apk` | `funread-light-<tag>.apk` |
-          | 包名 | `com.farfarfun.funread` | `com.farfarfun.funread.light` |
-          | Web 资源 | 打在 app 里 | 不打包，直接开你服务器上的页面 |
+          | Web 资源 | 打在应用里 | 不打包，直接开你服务器上的页面 |
           | 启动 | 不用网，进去之后才需要 | 必须有网 |
-          | 认证 | 设备 token（`Authorization: Bearer`） | 和手机浏览器一样的 cookie 登录态 |
+          | 认证 | 设备 token（`Authorization: Bearer`） | 和浏览器一样的 cookie 登录态 |
           | 服务端要求 | 要支持 `POST /auth/tokens/issue` 的 funread-api | 任意版本 |
+          | Android 包名 | `com.farfarfun.funread` | `com.farfarfun.funread.light` |
 
-          ## funread（打包版）怎么用
+          - 服务端是新版、想要离线也能打开 → **打包版**。
+          - 服务端跑的是老版本，或者只想要一个「书签式」的壳 → **light**。
+
+          ## 下载哪一个
+
+          | 平台 | 打包版 | light |
+          | --- | --- | --- |
+          | Android | `funread-<tag>.apk` | `funread-light-<tag>.apk` |
+          | Linux | `funread-<tag>-linux.AppImage` / `.deb` / `.rpm` | `funread-light-<tag>-linux.AppImage` / `.deb` / `.rpm` |
+          | Windows | `funread-<tag>-windows-setup.exe` / `.msi` | `funread-light-<tag>-windows-setup.exe` / `.msi` |
+          | macOS | `funread-<tag>-macos.dmg` | `funread-light-<tag>-macos.dmg` |
+
+          macOS 的 dmg 是 universal 包，Intel 和 Apple Silicon 通用。桌面端只在打
+          tag 时才构建 macOS，所以个别版本可能没有 dmg。
+
+          ## 所有产物都没有签名
+
+          这是个自托管小工具，没有买任何一家的开发者证书。系统会拦，绕过的方法：
+
+          - **Android**：在系统设置里允许「安装未知来源的应用」。（APK 用的是仓库
+            里那把固定密钥，升级不会装不上。）
+          - **Windows**：SmartScreen 弹「已保护你的电脑」→ 「更多信息」→
+            「仍要运行」。
+          - **macOS**：双击会说「已损坏，无法打开」—— 这是隔离属性，不是真损坏。
+            把应用拖进「应用程序」后在终端执行
+            `xattr -dr com.apple.quarantine /Applications/funread.app`，
+            或者在「系统设置 → 隐私与安全性」里点「仍要打开」。
+          - **Linux**：AppImage 下载后要 `chmod +x` 才能跑；deb 用
+            `sudo apt install ./funread-<tag>-linux.deb`。AppImage 有 80MB 左右，
+            因为它要把整套 WebKitGTK 带上；装 deb / rpm 的话只有 2MB，用的是系统
+            自己那份 WebView。
+
+          ## 打包版怎么用
 
           1. 装上，打开，填服务器地址（`http://192.168.1.10:8811` 这种；
              funread-web 的 8811 和 funread-api 的 18811 都行）。
           2. 填账号和口令。客户端会换一条**长期设备 token** 存在本机，口令本身不
              存 —— 之后不用再登录。
           3. 想换服务器、重新登录、或者退出：「我的 → 服务器」。
-          4. 「我的 → 我的设备」能看到所有登录过的设备，手机丢了在任意一台别的设备
+          4. 「我的 → 我的设备」能看到所有登录过的设备，设备丢了在任意一台别的设备
              上吊销对应那条就行。
 
-          局域网自托管基本都是明文 `http://`，两个 APK 都已经放开了 Android 的明文
-          流量限制。
+          局域网自托管基本都是明文 `http://`，所有客户端都已经放开了各自平台的明文
+          流量限制；桌面打包版的 API 请求由客户端自己发出，**服务器的 CORS 配置一行
+          都不用改**。
 
-          ## funread light 怎么用
+          ## light 怎么用
 
-          装上，填地址，之后它就把整个窗口交给你服务器上的 `/web` —— 和在手机浏览器
-          里打开同一个地址完全一样，包括登录态。要改地址：在「我的」里点「切换
-          服务器」，或者在最前面一页按返回键。
+          装上，填地址，之后它就把整个窗口交给你服务器上的 `/web` —— 和在浏览器里
+          打开同一个地址完全一样，包括登录态。要改地址：
 
-          ## 该选哪个
-
-          - 服务端是新版、想要离线也能打开 app → **打包版**。
-          - 服务端跑的是老版本，或者只想要一个「书签式」的壳 → **light**。
+          - 手机上：在「我的」里点「切换服务器」，或者在最前面一页按返回键。
+          - 桌面上：菜单栏「文件 → 切换服务器」（`Ctrl/Cmd + Shift + S`）。
           NOTES
           #  heredoc 用引号括起来，免得正文里那些 `反引号` 被 shell 当命令替换
           #  执行掉。代价是 $GITHUB_REF_NAME 也不会展开，所以版本号单独替一次。
@@ -272,9 +488,9 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --notes-file release-notes.md
-            gh release upload "$tag" release/*.apk --clobber
+            gh release upload "$tag" release/* --clobber
           else
-            gh release create "$tag" release/*.apk \
+            gh release create "$tag" release/* \
               --title "funread $tag" \
               --notes-file release-notes.md
           fi
