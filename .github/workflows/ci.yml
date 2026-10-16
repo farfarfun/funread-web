@@ -58,6 +58,12 @@ jobs:
       #  的 CLI 要顺着 node_modules 走到 @capacitor/android 里的原生源码
       #  （capacitor.settings.gradle 直接引的就是那个路径），pnpm 的符号链接布局
       #  在这条路上历来容易出岔子。
+      #  启动页是静态资源，Gradle 只是把它原样塞进 assets —— 里面写错一个字
+      #  照样出一个"构建成功"的 APK，装上才发现是白屏。本机没有 Android SDK、
+      #  跑不了真机，这一行 parse 是唯一拦得住它的东西。
+      - name: check launcher syntax
+        run: node --check mobile/www/launcher.js
+
       - name: install capacitor toolchain
         working-directory: mobile
         run: npm ci
