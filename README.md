@@ -56,6 +56,44 @@ cd mobile-packaged && npm install && npm run build:www && npm run sync   # 打�
 细节、踩过的坑、iOS 为什么未经验证，在各自的 README 里：
 [mobile/README.md](mobile/README.md)、[mobile-packaged/README.md](mobile-packaged/README.md)。
 
+## 桌面端：同样两个客户端
+
+两套 [Tauri 2](https://v2.tauri.app/) 工程，形态和上面两个 Android 客户端一一对应，
+应用标识也不同，**可以装在同一台机器上对比**。打 `v*` tag 时 CI 会把它们和 APK 一起
+传到同一个 Release 上。
+
+| | funread light（`desktop/`） | funread 打包版（`desktop-packaged/`） |
+| --- | --- | --- |
+| Web 资源 | 不打包，`navigate()` 到用户服务器 | **打进应用**（同一份 `dist-packaged/`） |
+| 页面来源 | 用户的服务器 | `tauri://localhost` |
+| 认证 | 同源 cookie 会话 | **`Authorization: Bearer <设备 token>`** |
+| 应用标识 | `com.farfarfun.funread.light` | `com.farfarfun.funread` |
+| 产物 | `funread-light-<tag>-{linux,windows,macos}.*` | `funread-<tag>-{linux,windows,macos}.*` |
+
+**Tauri 而不是 Electron**：Electron 每个 app 自带一份 Chromium（100MB 起步），
+Tauri 用系统 WebView，壳本身是个位数 MB。对一个自托管小工具这个差距没有道理。
+代价是 Linux 上的渲染行为取决于用户装的 WebKitGTK 版本，所以产物固定在
+ubuntu-22.04 上构建（标准源里带 webkit2gtk-4.1 的第一个 LTS，也是 AppImage 的
+glibc 基线）。
+
+两件桌面特有的事：
+
+- **light 版的地址是运行时的。** `tauri.conf.json` 里的 URL 和 Capacitor 的
+  `server.url` 一样是构建期配置，所以同样走「本地启动页 + 跳转」，只是跳转由 Rust
+  的 `WebviewWindow::navigate()` 发起，探活也挪进了 Rust。
+- **打包版的 API 请求从 Rust 发出去。** Tauri 的页面来源不在 funread-api 的 CORS
+  白名单里，而且 WebKit 把 `tauri://` 当不透明来源、发出去的 `Origin` 是空的 ——
+  加白名单在 Linux / macOS 上也救不回来。换掉 `fetch` 是壳层的事，Vue 一个字都没改。
+
+**所有桌面产物都没有签名**，也没有做 macOS 公证。第一次打开要绕过系统拦截，方法写在
+Release 说明和各自的 README 里：
+[desktop/README.md](desktop/README.md)、[desktop-packaged/README.md](desktop-packaged/README.md)。
+
+```bash
+cd desktop && cargo tauri build                                   # light
+pnpm run build:packaged && cd desktop-packaged && cargo tauri build   # 打包版
+```
+
 ### Vue 这边怎么区分两种形态
 
 一份源码出两种产物，分界是构建模式：
@@ -69,7 +107,7 @@ cd mobile-packaged && npm install && npm run build:www && npm run sync   # 打�
 [`src/api/packaged.ts`](src/api/packaged.ts) 顶部，两个方向的断言分别在
 `tests/bundle.test.js` 和 CI 的 `android-packaged` job 里。
 
-两套原生工程都不进 npm 包：`package.json` 的 `files` 是白名单
+四套客户端工程都不进 npm 包：`package.json` 的 `files` 是白名单
 （`bin`/`server`/`dist`），`tests/packaging.test.js` 盯着它别被改坏。
 
 ---
