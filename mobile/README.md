@@ -23,8 +23,9 @@ funread 是自托管的，没有"官方服务器"可连，所以这个 app 装�
 
 代价是**启动必须有网络**。这是预期行为，不是待修的缺陷。要离线启动得把 Web 资源
 打进包里，那样页面来源变成 `http://localhost`，`/api` 就成了跨源请求，cookie
-会话失效，必须等后端支持设备 token —— 那是另一个 flavor，包名
-`com.farfarfun.funread`，和 light 版两个包名不同，可以装在同一台手机上对比。
+会话失效，得改用设备 token —— 那一版现在做出来了，在
+[`../mobile-packaged/`](../mobile-packaged/README.md)，包名 `com.farfarfun.funread`，
+和 light 版两个包名不同，可以装在同一台手机上对比。
 
 ### 启动页是本地页面，不是 Capacitor 的 `server.url`
 
@@ -104,6 +105,7 @@ CLI 要顺着 node_modules 走到 `@capacitor/android` 里的原生源码
 
 ## 不在这个版本里的东西
 
-- 离线启动（要打包 Web 资源 + 后端设备 token）
+- 离线启动 —— 这是 light 版的定义性取舍，要它请装
+  [打包版](../mobile-packaged/README.md)
 - 推送、分享、系统级 TTS 之类的原生能力
 - release 签名与上架流程（现在只出 debug APK）
