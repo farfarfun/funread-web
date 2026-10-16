@@ -12,9 +12,24 @@ import { useAuth } from "../../composables/useAuth";
 import { useSearchHistory } from "../../composables/useSearchHistory";
 import { useTheme } from "../../composables/useTheme";
 
+/**
+ * funread light（Capacitor 套壳）往 WebView 上挂的原生对象，只有「回到填地址的
+ * 启动页」这一个动作，见 mobile/android/app/src/main/java/…/MainActivity.java。
+ *
+ * 套壳加载的是用户自己服务器上的这个页面，页面来源是远端，所以 Capacitor 的
+ * JS bridge 不会注入进来 —— 能用的只有 addJavascriptInterface 挂上去的这个。
+ * 浏览器里它不存在，下面的入口也就不会出现。
+ */
+interface FunreadShell {
+  openSetup?: () => void;
+}
+
 const router = useRouter();
 const message = useMessage();
 const auth = useAuth();
+const shell = (window as unknown as { FunreadShell?: FunreadShell }).FunreadShell;
+//  不用 ref：原生对象在页面脚本跑起来之前就挂好了，之后不会变。
+const inShell = typeof shell?.openSetup === "function";
 const { dark, toggle } = useTheme();
 const { history, clear: clearHistory } = useSearchHistory();
 
@@ -129,6 +144,16 @@ onMounted(() => {
 
       <n-list-item @click="router.push({ name: 'rss-sources' })">
         <div class="row"><span>订阅源目录</span></div>
+      </n-list-item>
+
+      <n-list-item v-if="inShell">
+        <div class="row">
+          <span>切换服务器</span>
+          <span class="row__value">funread light</span>
+        </div>
+        <template #suffix>
+          <n-button size="small" quaternary @click="shell?.openSetup?.()">更换</n-button>
+        </template>
       </n-list-item>
 
       <n-list-item>
