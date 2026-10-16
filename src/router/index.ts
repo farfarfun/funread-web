@@ -12,6 +12,7 @@
 import type { RouteRecordRaw } from "vue-router";
 import { createRouter, createWebHistory } from "vue-router";
 
+import { loadSession } from "../api/packaged";
 import { useAuth } from "../composables/useAuth";
 
 const WebLayout = () => import("../layouts/WebLayout.vue");
@@ -106,6 +107,20 @@ const routes: RouteRecordRaw[] = [
         component: () => import("../views/web/RegisterView.vue"),
         meta: { public: true, bare: true, title: "注册" },
       },
+
+      //  打包版独有：没有服务器地址 + 设备 token 之前，别的页面一个都打不开。
+      //  `__FUNREAD_PACKAGED__` 是构建期字面量，浏览器和 funread light 那两份
+      //  产物里这一条连同组件一起在构建期被删掉（`false ? [...] : []`）。
+      ...(__FUNREAD_PACKAGED__
+        ? ([
+            {
+              path: "setup",
+              name: "packaged-setup",
+              component: () => import("../views/packaged/SetupView.vue"),
+              meta: { public: true, bare: true, title: "连接服务器" },
+            },
+          ] as RouteRecordRaw[])
+        : []),
     ],
   },
 
@@ -159,10 +174,26 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   document.title = to.meta.title ? `${to.meta.title} · funread` : "funread";
+
+  //  打包版：没有 (服务器地址, 设备 token) 这一对，任何请求都没地方发 ——
+  //  连 `/auth/me` 都会打到 `http://localhost/api/v1` 上变成一个和认证毫无关系
+  //  的 404。所以这一条排在 `meta.public` 前面：登录页、注册页在这个形态下同样
+  //  打不开（它们靠同源 cookie，跨站根本走不通）。
+  if (__FUNREAD_PACKAGED__ && to.name !== "packaged-setup" && !loadSession()) {
+    return { name: "packaged-setup", query: { next: to.fullPath } };
+  }
+
   if (to.meta.public) return true;
 
   const auth = useAuth();
   const state = await auth.ensure();
+
+  //  打包版的凭据是设备 token，不是 cookie 会话。后端给了 Bearer 就不回落
+  //  cookie，所以「未登录」只可能是这条 token 不认了（`request()` 已经在 401
+  //  时把它清掉了）。该回的是填地址 + 账号的配置页，不是 Web 登录页。
+  if (__FUNREAD_PACKAGED__ && !state?.authenticated) {
+    return { name: "packaged-setup", query: { next: to.fullPath } };
+  }
 
   if (to.meta.admin) {
     //  管理端认**账号角色**：`state.admin` 现在等价于后端的 `require_reader_admin`，

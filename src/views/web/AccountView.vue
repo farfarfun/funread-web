@@ -6,6 +6,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
+import { clearSession, loadSession } from "../../api/packaged";
 import type { ShelfBook } from "../../api/types";
 import TopBar from "../../components/web/TopBar.vue";
 import { useAuth } from "../../composables/useAuth";
@@ -30,6 +31,10 @@ const auth = useAuth();
 const shell = (window as unknown as { FunreadShell?: FunreadShell }).FunreadShell;
 //  不用 ref：原生对象在页面脚本跑起来之前就挂好了，之后不会变。
 const inShell = typeof shell?.openSetup === "function";
+//  打包版（Web 资源打进 app、跨站、设备 token）。构建期常量，浏览器和 light 版
+//  那两份产物里下面这些分支连同它们引到的代码一起被删掉。
+const packaged = __FUNREAD_PACKAGED__;
+const packagedServer = packaged ? (loadSession()?.server ?? "") : "";
 const { dark, toggle } = useTheme();
 const { history, clear: clearHistory } = useSearchHistory();
 
@@ -74,6 +79,17 @@ async function clearAllCache() {
 }
 
 async function logout() {
+  if (__FUNREAD_PACKAGED__) {
+    //  打包版没有会话可注销，「退出」就是扔掉这台设备的 token。先吊销再清本地
+    //  ——  反过来的话就没有凭据可用来吊销了，服务端会留下一条谁也认不出来的
+    //  僵尸记录。吊销失败照样往下走：本地清掉至少这台设备看不到数据了，服务端
+    //  那条用户可以在别的设备的「我的设备」里删。
+    const session = loadSession();
+    if (session?.token_id) await api.revokeDevice(session.token_id).catch(() => undefined);
+    clearSession();
+    router.replace({ name: "packaged-setup" });
+    return;
+  }
   await auth.logout();
   router.replace({ name: "login" });
 }
@@ -156,6 +172,20 @@ onMounted(() => {
         </template>
       </n-list-item>
 
+      <!-- 打包版：服务器地址是本机配置的，改地址和重新登录是同一张表单
+           （换服务器必然要换一条 token，分开做只会是两份一样的表单）。 -->
+      <n-list-item v-if="packaged">
+        <div class="row">
+          <span>服务器</span>
+          <span class="row__value">{{ packagedServer || "未配置" }}</span>
+        </div>
+        <template #suffix>
+          <n-button size="small" quaternary @click="router.push({ name: 'packaged-setup' })">
+            更换 / 重新登录
+          </n-button>
+        </template>
+      </n-list-item>
+
       <n-list-item>
         <div class="row">
           <span>候选源池</span>
@@ -184,7 +214,10 @@ onMounted(() => {
       </n-button>
       <n-popconfirm v-else-if="auth.authenticated.value" @positive-click="logout">
         <template #trigger><n-button block>退出登录</n-button></template>
-        退出后书架和订阅需要重新登录才能看到，确定吗？
+        <template v-if="packaged">
+          退出会吊销这台设备的 token，下次打开要重新填账号口令。确定吗？
+        </template>
+        <template v-else>退出后书架和订阅需要重新登录才能看到，确定吗？</template>
       </n-popconfirm>
     </div>
   </div>
