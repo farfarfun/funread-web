@@ -68,7 +68,14 @@ cd mobile-packaged && npm install && npm run build:www && npm run sync   # 打�
 | 页面来源 | 用户的服务器 | `tauri://localhost` |
 | 认证 | 同源 cookie 会话 | **`Authorization: Bearer <设备 token>`** |
 | 应用标识 | `com.farfarfun.funread.light` | `com.farfarfun.funread` |
-| 产物 | `funread-light-<tag>-{linux,windows,macos}.*` | `funread-<tag>-{linux,windows,macos}.*` |
+| 产物 | `funread-light-<tag>-{linux,windows,macos}.*` | `funread_<版本>_<架构>.deb`、`funread-<版本>-macos-<架构>.dmg` 等 |
+
+**两套产物名**。打包版按 [farfarfun/packages](https://github.com/farfarfun/packages)
+的接入规范拼（`docs/package-spec.md`）：版本号不带 `v`，`.deb` 用下划线分隔、
+macOS 分 `arm64` / `amd64` 两个 dmg，外加一个覆盖全部附件的 `SHA256SUMS`。组织的
+APT 源和 Homebrew tap 是**按文件名**认版本和架构的，差一个字就收不进去。light 不进
+包仓库 —— 它装完还要填服务器地址，不适合「装上就能用」的包管理器分发 —— 名字沿用
+原来的，继续只在 Release 页面提供。
 
 **Tauri 而不是 Electron**：Electron 每个 app 自带一份 Chromium（100MB 起步），
 Tauri 用系统 WebView，壳本身是个位数 MB。对一个自托管小工具这个差距没有道理。

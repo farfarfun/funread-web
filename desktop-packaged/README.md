@@ -135,6 +135,15 @@ cargo tauri build --bundles deb,appimage
 Linux 和 Windows 每次 push 都构建，**macOS 只在打 `v*` tag 时构建**（runner 按
 10 倍计费）。
 
+macOS 上**一条 job 里编两次**，分别出 `aarch64-apple-darwin` 和 `x86_64-apple-darwin`
+的 dmg，不出 universal：[farfarfun/packages](https://github.com/farfarfun/packages)
+的 cask 按 `funread-<版本>-macos-<架构>.dmg` 拼下载地址，两个架构缺一个整份 cask 都
+不生成。不拆成两台 runner 是因为 universal 本来就要把两个架构各编一遍再 lipo，拆开
+省不出编译时间，只会多付一次启动开销，而且两条 job 的 rust-cache 会抢同一个键。
+
+产物名的另一半规矩（`.deb` 用下划线、版本不带 `v`、最后一步生成 `SHA256SUMS`）
+写在 `ci.yml` 的头注释里。light 的名字不跟着改，它不进包仓库。
+
 **所有产物都没有签名**，也没有做 macOS 公证。绕过方法见
 [`../desktop/README.md`](../desktop/README.md#ci-与签名)。
 
