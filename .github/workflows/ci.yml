@@ -1,14 +1,25 @@
-#  两条流水线放一个文件里：web 是这个仓库本来就有的东西（Vue 构建 + server 的
-#  单元测试），android 是 mobile/ 下的 Capacitor 套壳。
+#  四条流水线放一个文件里：
 #
-#  两个 job 故意不串行、也不互相依赖：light 版的 APK 里**不打包** dist/，它运行时
-#  直接去加载用户自己服务器上的页面，所以 Vue 构建不是出包的前置条件。等将来那版
-#  打包资源的 flavor 做出来，才需要把 web 的产物喂给 android。
+#  - web            仓库本来就有的东西（Vue 构建 + server 的单元测试）
+#  - android        mobile/ 下的 funread light 套壳
+#  - android-packaged  mobile-packaged/ 下的打包版
+#  - release        打 v* tag 时把两个 APK 传到 GitHub Release 上
+#
+#  前两个 job 故意不互相依赖：light 版的 APK 里**不打包** dist/，它运行时直接去
+#  加载用户自己服务器上的页面，Vue 构建不是它出包的前置条件。打包版正相反 ——
+#  它装的就是 dist，所以那条 job 自己从头构建一遍 Web 资源。
+#
+#  两份 Web 构建产物不能互相代替：浏览器那份走同源 cookie，打包版那份走跨站
+#  Bearer。所以 android-packaged **不从 web job 下载 dist**，而是自己跑一次
+#  `build:packaged`，拿错了装上就是满屏 401。
 name: ci
 
 on:
   push:
     branches: [master]
+    #  发版靠打 tag。少了这一行，tag push 不匹配上面的 branches 过滤，
+    #  整个工作流不会触发，release job 也就永远跑不到。
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -31,11 +42,13 @@ jobs:
       #  这个仓库的锁文件是 pnpm 的。用 npm install 会绕开锁文件重新解析一遍
       #  依赖，CI 每天跑出来的版本都可能不一样 —— 要的是可复现，不是"能装上"。
       - run: pnpm install --frozen-lockfile
+      #  build 要排在 test 前面：tests/bundle.test.js 断言的是构建产物的内容
+      #  （浏览器那份里不许出现打包版的认证逻辑），没有 dist/ 它只会跳过。
       - run: pnpm run build
       - run: pnpm test
 
   android:
-    name: android (debug apk)
+    name: android (light debug apk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,3 +97,155 @@ jobs:
           name: funread-light-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  android-packaged:
+    name: android (packaged debug apk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      #  这一版的 APK 里装的就是 Vue 的构建产物，所以 Web 构建是出包的前置条件。
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:packaged
+
+      #  漏掉 `--mode packaged` 不会让上面任何一步失败，只会出一份"同源 /api"的
+      #  包 —— 装到手机上页面照样打得开，每个请求都是 404。本机没有安卓设备、
+      #  CI 也不跑真机，这两行 grep 是唯一拦得住它的东西。
+      #  反方向的断言在 tests/bundle.test.js：浏览器那份里不许出现这些。
+      - name: assert packaged bundle
+        run: |
+          grep -q "Authorization" dist-packaged/assets/*.js
+          grep -q "funread.packaged.session" dist-packaged/assets/*.js
+
+      #  mobile-packaged/www 不进版本库（它就是 dist-packaged 的副本）。
+      #  少了这一步 cap sync 直接报 webDir 不存在。
+      - name: stage web assets
+        run: |
+          rm -rf mobile-packaged/www
+          cp -r dist-packaged mobile-packaged/www
+
+      #  和 light 版同样的理由：Capacitor 的原生工程引的是 node_modules 里的
+      #  相对路径，这一套用 npm 装、不挂进根目录的 pnpm workspace。
+      - name: install capacitor toolchain
+        working-directory: mobile-packaged
+        run: npm ci
+
+      - name: cap sync
+        working-directory: mobile-packaged
+        run: npx cap sync android
+
+      - name: assembleDebug
+        working-directory: mobile-packaged/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: funread-packaged-debug-apk
+          path: mobile-packaged/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    name: release (v* tag)
+    #  只在 tag 上跑。master 上的每次 push 也会走完上面三条，但不该发版。
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [web, android, android-packaged]
+    runs-on: ubuntu-latest
+    permissions:
+      #  默认的 GITHUB_TOKEN 只读，建 Release 要写。只在这一条 job 上放开。
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: funread-light-debug-apk
+          path: artifacts/light
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: funread-packaged-debug-apk
+          path: artifacts/packaged
+
+      #  两个 APK 的文件名都是 app-debug.apk，直接传上去会撞名。按版本重命名，
+      #  顺带让下载下来的文件自己说明是哪个版本、哪个 tag。
+      - name: name the apks
+        run: |
+          mkdir -p release
+          cp artifacts/packaged/app-debug.apk "release/funread-${GITHUB_REF_NAME}.apk"
+          cp artifacts/light/app-debug.apk "release/funread-light-${GITHUB_REF_NAME}.apk"
+          ls -l release
+
+      - name: write release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          两个 Android 客户端，**包名不同，可以装在同一台手机上对比**。两个都是
+          debug 签名的 APK，装之前要在系统里允许「安装未知来源的应用」。
+
+          funread 是自托管的，没有官方服务器 —— 两个版本装上之后第一件事都是问你
+          自己那台服务器的地址。
+
+          | | funread（打包版） | funread light |
+          | --- | --- | --- |
+          | 文件 | `funread-<tag>.apk` | `funread-light-<tag>.apk` |
+          | 包名 | `com.farfarfun.funread` | `com.farfarfun.funread.light` |
+          | Web 资源 | 打在 app 里 | 不打包，直接开你服务器上的页面 |
+          | 启动 | 不用网，进去之后才需要 | 必须有网 |
+          | 认证 | 设备 token（`Authorization: Bearer`） | 和手机浏览器一样的 cookie 登录态 |
+          | 服务端要求 | 要支持 `POST /auth/tokens/issue` 的 funread-api | 任意版本 |
+
+          ## funread（打包版）怎么用
+
+          1. 装上，打开，填服务器地址（`http://192.168.1.10:8811` 这种；
+             funread-web 的 8811 和 funread-api 的 18811 都行）。
+          2. 填账号和口令。客户端会换一条**长期设备 token** 存在本机，口令本身不
+             存 —— 之后不用再登录。
+          3. 想换服务器、重新登录、或者退出：「我的 → 服务器」。
+          4. 「我的 → 我的设备」能看到所有登录过的设备，手机丢了在任意一台别的设备
+             上吊销对应那条就行。
+
+          局域网自托管基本都是明文 `http://`，两个 APK 都已经放开了 Android 的明文
+          流量限制。
+
+          ## funread light 怎么用
+
+          装上，填地址，之后它就把整个窗口交给你服务器上的 `/web` —— 和在手机浏览器
+          里打开同一个地址完全一样，包括登录态。要改地址：在「我的」里点「切换
+          服务器」，或者在最前面一页按返回键。
+
+          ## 该选哪个
+
+          - 服务端是新版、想要离线也能打开 app → **打包版**。
+          - 服务端跑的是老版本，或者只想要一个「书签式」的壳 → **light**。
+          NOTES
+          cat release-notes.md
+
+      #  重跑同一个 tag 时 `gh release create` 会因为已存在而失败，所以分两条路。
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md
+            gh release upload "$tag" release/*.apk --clobber
+          else
+            gh release create "$tag" release/*.apk \
+              --title "funread $tag" \
+              --notes-file release-notes.md
+          fi
