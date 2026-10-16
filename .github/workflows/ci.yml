@@ -232,6 +232,9 @@ jobs:
           - 服务端是新版、想要离线也能打开 app → **打包版**。
           - 服务端跑的是老版本，或者只想要一个「书签式」的壳 → **light**。
           NOTES
+          #  heredoc 用引号括起来，免得正文里那些 `反引号` 被 shell 当命令替换
+          #  执行掉。代价是 $GITHUB_REF_NAME 也不会展开，所以版本号单独替一次。
+          sed -i "s/<tag>/${GITHUB_REF_NAME}/g" release-notes.md
           cat release-notes.md
 
       #  重跑同一个 tag 时 `gh release create` 会因为已存在而失败，所以分两条路。
