@@ -14,6 +14,17 @@
 #  两份 Web 构建产物不能互相代替：浏览器那份走同源 cookie，打包版那份走跨站
 #  Bearer。所以 android-packaged **不从 web job 下载 dist**，而是自己跑一次
 #  `build:packaged`，拿错了装上就是满屏 401。
+#
+#  附件名分两套，不是随手拼的：
+#
+#  - **打包版（funread）** 按 farfarfun/packages 的接入规范来（那边的
+#    docs/package-spec.md 第 1.2、1.3 节）。组织的 APT 源和 Homebrew tap 是**按
+#    文件名认东西**的：`funread_<版本>_<架构>.deb`、
+#    `funread-<版本>-macos-<架构>.dmg`，版本号**不带 v**，外加一个覆盖本次全部
+#    附件的 `SHA256SUMS`。差一个字 cask 就整份不生成，而且报的是「附件里缺
+#    xxx.dmg」，看着像构建矩阵出了岔子。
+#  - **light** 不进包仓库（装完还要填服务器地址，不适合包管理器分发），名字沿用
+#    原来的 `<形态>-<tag>-<平台>.<后缀>`，Release 页面和各 README 引的都是它。
 name: ci
 
 on:
@@ -313,8 +324,8 @@ jobs:
           args: --bundles ${{ matrix.bundles }} ${{ matrix.args }}
 
       #  Tauri 出来的名字是 `funread-light_1.1.124_amd64.AppImage` 这种，三个平台
-      #  各不相同，而且不带 tag。统一改成 `<形态>-<tag>-<平台>.<后缀>`：下载下来的
-      #  文件自己说明是哪个版本、哪个平台、哪一种形态。
+      #  各不相同，而且不带 tag。在这里统一改名，两套规则见本文件头注释：light 还是
+      #  `<形态>-<tag>-<平台>.<后缀>`，打包版按 farfarfun/packages 的接入规范来。
       - name: name the bundles
         shell: bash
         env:
@@ -323,26 +334,70 @@ jobs:
           PROJECT: ${{ matrix.project }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
+          TAG="${GITHUB_REF_NAME}"
           case "$GITHUB_REF" in
             refs/tags/*) ;;
-            *) VERSION="v0.0.0-dev" ;;
+            *) TAG="v0.0.0-dev" ;;
+          esac
+          #  打包版的名字里用它：规范要的版本号是 tag 去掉前缀那一截，cask 的 url
+          #  正是按 `<前缀>#{version}` 拼回去的。
+          VERSION="${TAG#v}"
+
+          #  没指定 --target 时产物落在 target/release 下，架构就是 runner 自己的。
+          case "$(uname -m)" in
+            arm64 | aarch64) HOST_ARCH=arm64 ;;
+            *) HOST_ARCH=amd64 ;;
           esac
 
           mkdir -p release
           found=0
           while IFS= read -r path; do
-            case "$(basename "$path")" in
-              *.AppImage)  out="${APP}-${VERSION}-${PLATFORM}.AppImage" ;;
-              *.deb)       out="${APP}-${VERSION}-${PLATFORM}.deb" ;;
-              *.rpm)       out="${APP}-${VERSION}-${PLATFORM}.rpm" ;;
-              *.msi)       out="${APP}-${VERSION}-${PLATFORM}.msi" ;;
-              *-setup.exe) out="${APP}-${VERSION}-${PLATFORM}-setup.exe" ;;
-              *.dmg)       out="${APP}-${VERSION}-${PLATFORM}.dmg" ;;
-              #  bundle 目录里还有一堆别的 .exe（NSIS 自己的中间产物之类），
-              #  不在上面名单里的一律不要。
-              *) continue ;;
+            #  架构从 target 下的三元组目录取，而不是从 Tauri 拼的文件名里猜：同一个
+            #  架构它在三个平台上各写各的（`x64` / `amd64` / `x86_64` / `aarch64`），
+            #  而目录名是 cargo 按 --target 放的，只有一种写法。
+            case "$path" in
+              */target/aarch64-*/release/*)   arch=arm64 ;;
+              */target/x86_64-*/release/*)    arch=amd64 ;;
+              */target/universal-*/release/*) arch=universal ;;
+              *)                              arch="$HOST_ARCH" ;;
             esac
+
+            if [ "$APP" = "funread-light" ]; then
+              case "$(basename "$path")" in
+                *.AppImage)  out="${APP}-${TAG}-${PLATFORM}.AppImage" ;;
+                *.deb)       out="${APP}-${TAG}-${PLATFORM}.deb" ;;
+                *.rpm)       out="${APP}-${TAG}-${PLATFORM}.rpm" ;;
+                *.msi)       out="${APP}-${TAG}-${PLATFORM}.msi" ;;
+                *-setup.exe) out="${APP}-${TAG}-${PLATFORM}-setup.exe" ;;
+                *.dmg)       out="${APP}-${TAG}-${PLATFORM}.dmg" ;;
+                #  bundle 目录里还有一堆别的 .exe（NSIS 自己的中间产物之类），
+                #  不在上面名单里的一律不要。
+                *) continue ;;
+              esac
+            else
+              case "$(basename "$path")" in
+                *.AppImage)  out="${APP}-${VERSION}-${PLATFORM}-${arch}.AppImage" ;;
+                #  下划线分隔、版本不带 v、架构是 amd64/arm64 —— 规范 1.2 对 deb
+                #  只认这一种写法。包名那一段必须是 deb 里 `Package` 字段的值
+                #  （apt 按它认包），而 tauri.conf.json 的 productName 就是 funread。
+                *.deb)       out="${APP}_${VERSION}_${arch}.deb" ;;
+                *.rpm)       out="${APP}-${VERSION}-${PLATFORM}-${arch}.rpm" ;;
+                #  名字里的 `setup` 不是装饰：站点下载区按它区分「安装程序」和
+                #  「单个可执行文件」，不带这个词的 .msi 会被标成后者。
+                *.msi)       out="${APP}-${VERSION}-${PLATFORM}-${arch}-setup.msi" ;;
+                *-setup.exe) out="${APP}-${VERSION}-${PLATFORM}-${arch}-setup.exe" ;;
+                #  cask 按这个名字拼下载地址，一个字都不能差。
+                *.dmg)       out="${APP}-${VERSION}-macos-${arch}.dmg" ;;
+                *) continue ;;
+              esac
+            fi
+
+            #  重名就是在悄悄丢东西 —— 分架构构建之后两个 DMG 落到同一个名字上的话，
+            #  Release 里只会剩后拷进来的那个，而 cask 那边报的是「缺另一个架构」。
+            if [ -e "release/$out" ]; then
+              echo "两个产物撞到同一个名字上了：$out（后一个是 $path）"
+              exit 1
+            fi
             cp "$path" "release/$out"
             found=$((found + 1))
           done < <(find "${PROJECT}/src-tauri/target" -type f -path '*/release/bundle/*' \
@@ -428,12 +483,14 @@ jobs:
           | 平台 | 打包版 | light |
           | --- | --- | --- |
           | Android | `funread-<tag>.apk` | `funread-light-<tag>.apk` |
-          | Linux | `funread-<tag>-linux.AppImage` / `.deb` / `.rpm` | `funread-light-<tag>-linux.AppImage` / `.deb` / `.rpm` |
-          | Windows | `funread-<tag>-windows-setup.exe` / `.msi` | `funread-light-<tag>-windows-setup.exe` / `.msi` |
-          | macOS | `funread-<tag>-macos.dmg` | `funread-light-<tag>-macos.dmg` |
+          | Linux | `funread_<ver>_amd64.deb` / `funread-<ver>-linux-amd64.AppImage` / `.rpm` | `funread-light-<tag>-linux.AppImage` / `.deb` / `.rpm` |
+          | Windows | `funread-<ver>-windows-amd64-setup.exe` / `-setup.msi` | `funread-light-<tag>-windows-setup.exe` / `.msi` |
+          | macOS | `funread-<ver>-macos-arm64.dmg` / `-amd64.dmg` | `funread-light-<tag>-macos.dmg` |
 
-          macOS 的 dmg 是 universal 包，Intel 和 Apple Silicon 通用。桌面端只在打
-          tag 时才构建 macOS，所以个别版本可能没有 dmg。
+          打包版的文件名不带 `v`：它要进 farfarfun 的 APT 源和 Homebrew tap，那边
+          按文件名认版本和架构。macOS 的包因此**分架构**：`arm64` 给 M 系列芯片，
+          `amd64` 给 Intel。light 的 dmg 还是 universal 包，两种芯片通用。桌面端只在
+          打 tag 时才构建 macOS，所以个别版本可能没有 dmg。
 
           ## 所有产物都没有签名
 
@@ -448,7 +505,7 @@ jobs:
             `xattr -dr com.apple.quarantine /Applications/funread.app`，
             或者在「系统设置 → 隐私与安全性」里点「仍要打开」。
           - **Linux**：AppImage 下载后要 `chmod +x` 才能跑；deb 用
-            `sudo apt install ./funread-<tag>-linux.deb`。AppImage 有 80MB 左右，
+            `sudo apt install ./funread_<ver>_amd64.deb`。AppImage 有 80MB 左右，
             因为它要把整套 WebKitGTK 带上；装 deb / rpm 的话只有 2MB，用的是系统
             自己那份 WebView。
 
@@ -476,7 +533,8 @@ jobs:
           NOTES
           #  heredoc 用引号括起来，免得正文里那些 `反引号` 被 shell 当命令替换
           #  执行掉。代价是 $GITHUB_REF_NAME 也不会展开，所以版本号单独替一次。
-          sed -i "s/<tag>/${GITHUB_REF_NAME}/g" release-notes.md
+          #  两个占位符：light 的名字里是整个 tag，打包版的名字里是去掉 v 的版本号。
+          sed -i "s/<tag>/${GITHUB_REF_NAME}/g; s/<ver>/${GITHUB_REF_NAME#v}/g" release-notes.md
           cat release-notes.md
 
       #  重跑同一个 tag 时 `gh release create` 会因为已存在而失败，所以分两条路。
