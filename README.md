@@ -25,6 +25,26 @@ pnpm dev
 （`funread-web server run`）用 `--backend` 或 config.toml 的 `[server] backend`。页面支持登记、筛选、排序、分页、启停、立即采集、重置刷新时间、
 单条/批量删除以及操作队列反馈。
 
+## 移动端：funread light
+
+`mobile/` 下是一个 Capacitor 套壳的 Android / iOS 客户端，**不是**另一套前端：
+它只带一个启动页，让用户填自己那台服务器的地址，然后把整个窗口交给那台服务器上
+的这同一个 `/web`。
+
+这样页面来源就是用户的服务器，`/api` 是同源请求，现有的 cookie 会话原样生效，
+**后端一行都不用改**。代价是启动必须有网络 —— 这是预期行为。将来那版打包 Web
+资源的（包名 `com.farfarfun.funread`，可与 light 版并存安装）要等后端支持设备
+token，不在这一版范围内。
+
+```bash
+cd mobile && npm install && npm run sync
+```
+
+细节、踩过的坑、以及 iOS 为什么未经验证，都在 [mobile/README.md](mobile/README.md)。
+
+`mobile/` 不进 npm 包：`package.json` 的 `files` 是白名单（`bin`/`server`/`dist`），
+`tests/packaging.test.js` 盯着它别被改坏。
+
 ---
 
 ## 关于 farfarfun
