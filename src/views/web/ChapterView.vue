@@ -140,6 +140,33 @@ const paragraphs = computed(() =>
 
 const totalChars = computed(() => (content.value?.text || "").length);
 
+/**
+ * 每一段在**原文**里的起始字符下标。
+ *
+ * 段落是按 `\n+` 切出来的，分隔符本身不进 `paragraphs`，所以不能拿各段长度
+ * 直接累加 —— 那样会把换行吃掉，越往后偏得越多。用 `indexOf` 从上一段结束处
+ * 往后找，位置就和 `char_offset` 的口径对齐了。
+ */
+const paragraphStarts = computed(() => {
+  const text = content.value?.text || "";
+  const starts: number[] = [];
+  let cursor = 0;
+  for (const line of paragraphs.value) {
+    const found = text.indexOf(line, cursor);
+    const start = found >= 0 ? found : cursor;
+    starts.push(start);
+    cursor = start + line.length;
+  }
+  return starts;
+});
+
+/** 正文里的段落元素，顺序与 `paragraphs` 一致。 */
+function paragraphNodes(): HTMLElement[] {
+  const element = scroller.value;
+  if (!element) return [];
+  return Array.from(element.querySelectorAll<HTMLElement>("[data-para]"));
+}
+
 async function bootstrap() {
   loading.value = true;
   error.value = "";
@@ -216,20 +243,69 @@ async function loadChapter(restoreOffset = 0) {
   }
 }
 
+/**
+ * 把字符偏移还原成滚动位置。
+ *
+ * 原先是整章比例法（`offset / totalChars × 可滚高度`），那等于假设字符在章内
+ * **均匀分布**。对话多的章节里「四个字一段」照样占满一行，和「四百字一段」
+ * 每个字摊到的高度差十倍，于是恢复位置能差出十几行。
+ *
+ * 现在先定位到偏移落在哪一段，再在段内按比例插值 —— 段内的字符分布才是接近
+ * 均匀的。`char_offset` 的定义本来就是「正文里的第几个字」（见后端
+ * `ReaderProgress` 的注释），这个实现才对得上它；Flutter 客户端用的也是这个
+ * 口径，两端续读因此能落在同一处。
+ */
 function restore(offset: number) {
   const element = scroller.value;
   if (!element || !offset || !totalChars.value) return;
-  const ratio = Math.min(1, offset / totalChars.value);
-  element.scrollTop = ratio * (element.scrollHeight - element.clientHeight);
+  const nodes = paragraphNodes();
+  const starts = paragraphStarts.value;
+  if (!nodes.length || nodes.length !== starts.length) {
+    //  DOM 还没渲染出来（或与段落数对不上）时回落到比例法，总比不恢复强
+    const ratio = Math.min(1, offset / totalChars.value);
+    element.scrollTop = ratio * (element.scrollHeight - element.clientHeight);
+    return;
+  }
+
+  let target = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (starts[i] > offset) break;
+    target = i;
+  }
+  const node = nodes[target];
+  const length = paragraphs.value[target]?.length || 1;
+  const within = Math.min(1, Math.max(0, (offset - starts[target]) / length));
+  element.scrollTop = Math.min(
+    node.offsetTop + within * node.offsetHeight,
+    element.scrollHeight - element.clientHeight,
+  );
 }
 
-/** 当前滚动位置换算成字符偏移。 */
+/** 当前滚动位置换算成字符偏移，即「视口顶端是第几个字」。与 `restore` 互逆。 */
 function currentOffset(): number {
   const element = scroller.value;
   if (!element || !totalChars.value) return 0;
-  const scrollable = element.scrollHeight - element.clientHeight;
-  if (scrollable <= 0) return 0;
-  return Math.round((element.scrollTop / scrollable) * totalChars.value);
+  const nodes = paragraphNodes();
+  const starts = paragraphStarts.value;
+  if (!nodes.length || nodes.length !== starts.length) {
+    const scrollable = element.scrollHeight - element.clientHeight;
+    if (scrollable <= 0) return 0;
+    return Math.round((element.scrollTop / scrollable) * totalChars.value);
+  }
+
+  const top = element.scrollTop;
+  //  从后往前找第一个起点不低于视口顶端的段 —— 顺着找的话要多比一次边界
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    const node = nodes[i];
+    if (node.offsetTop > top && i > 0) continue;
+    const length = paragraphs.value[i]?.length || 1;
+    const within = Math.min(
+      1,
+      Math.max(0, (top - node.offsetTop) / Math.max(1, node.offsetHeight)),
+    );
+    return Math.round(starts[i] + within * length);
+  }
+  return 0;
 }
 
 async function save(offset: number, options: { immediate?: boolean } = {}) {
@@ -576,6 +652,7 @@ watch(() => settings.value.theme, () => undefined);
         <p
           v-for="(line, position) in paragraphs"
           :key="position"
+          data-para
           class="reader__p"
           :class="{ 'reader__p--speaking': speech.index.value === position }"
           :style="paragraphStyle"
