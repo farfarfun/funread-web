@@ -184,10 +184,13 @@
 
     <form id="form" autocomplete="off">
       <label for="url">服务器地址</label>
+      <!-- 不用 type="url"：浏览器会按"绝对 URL"校验，用户敲的
+           `192.168.1.10:8811` 直接被拦在提交之前，下面那段自动补 http:// 的
+           逻辑根本没机会跑。校验自己来，报错也能说人话。 -->
       <input
         id="url"
         name="url"
-        type="url"
+        type="text"
         inputmode="url"
         enterkeyhint="go"
         autocapitalize="none"
