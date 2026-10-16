@@ -48,7 +48,7 @@ jobs:
       - run: pnpm test
 
   android:
-    name: android (light debug apk)
+    name: android (light apk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,18 +88,31 @@ jobs:
         working-directory: mobile
         run: npx cap sync android
 
-      - name: assembleDebug
+      - name: assembleRelease
         working-directory: mobile/android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        #  release 而不是 debug：APK 要签的是仓库里那把固定密钥（见
+        #  keystore.yml），debug 签名在 CI 上每次都变，用户升级会装不上。
+        #  版本号从 tag 取，非 tag 构建回落到 0.0.0-dev。
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) VERSION="0.0.0-dev" ;;
+          esac
+          #  versionCode 必须单调递增且是整数：用 run_number，它在这个仓库里
+          #  只增不减，比从版本号里拼数字可靠（1.1.124 拼出来会溢出或撞号）。
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PfunreadVersionName="$VERSION" \
+            -PfunreadVersionCode="$GITHUB_RUN_NUMBER"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: funread-light-debug-apk
-          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          name: funread-light-apk
+          path: mobile/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
   android-packaged:
-    name: android (packaged debug apk)
+    name: android (packaged apk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,14 +162,27 @@ jobs:
         working-directory: mobile-packaged
         run: npx cap sync android
 
-      - name: assembleDebug
+      - name: assembleRelease
         working-directory: mobile-packaged/android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        #  release 而不是 debug：APK 要签的是仓库里那把固定密钥（见
+        #  keystore.yml），debug 签名在 CI 上每次都变，用户升级会装不上。
+        #  版本号从 tag 取，非 tag 构建回落到 0.0.0-dev。
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) VERSION="0.0.0-dev" ;;
+          esac
+          #  versionCode 必须单调递增且是整数：用 run_number，它在这个仓库里
+          #  只增不减，比从版本号里拼数字可靠（1.1.124 拼出来会溢出或撞号）。
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PfunreadVersionName="$VERSION" \
+            -PfunreadVersionCode="$GITHUB_RUN_NUMBER"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: funread-packaged-debug-apk
-          path: mobile-packaged/android/app/build/outputs/apk/debug/*.apk
+          name: funread-packaged-apk
+          path: mobile-packaged/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
   release:
@@ -173,12 +199,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: funread-light-debug-apk
+          name: funread-light-apk
           path: artifacts/light
 
       - uses: actions/download-artifact@v4
         with:
-          name: funread-packaged-debug-apk
+          name: funread-packaged-apk
           path: artifacts/packaged
 
       #  两个 APK 的文件名都是 app-debug.apk，直接传上去会撞名。按版本重命名，
@@ -186,8 +212,8 @@ jobs:
       - name: name the apks
         run: |
           mkdir -p release
-          cp artifacts/packaged/app-debug.apk "release/funread-${GITHUB_REF_NAME}.apk"
-          cp artifacts/light/app-debug.apk "release/funread-light-${GITHUB_REF_NAME}.apk"
+          cp artifacts/packaged/app-release.apk "release/funread-${GITHUB_REF_NAME}.apk"
+          cp artifacts/light/app-release.apk "release/funread-light-${GITHUB_REF_NAME}.apk"
           ls -l release
 
       - name: write release notes

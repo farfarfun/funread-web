@@ -7,8 +7,15 @@ android {
         applicationId "com.farfarfun.funread"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        //  版本号跟 tag 走：CI 打 v1.1.124 这种 tag 时传 -PfunreadVersionName=1.1.124
+        //  进来。写死的话用户装上之后没法从系统里分辨自己装的是哪一版，而
+        //  versionCode 不递增还会让某些安装器拒绝"降级"。
+        versionCode project.hasProperty('funreadVersionCode')
+                ? project.property('funreadVersionCode').toInteger()
+                : 1
+        versionName project.hasProperty('funreadVersionName')
+                ? project.property('funreadVersionName')
+                : "0.0.0-dev"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +23,31 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    //  **固定的**签名密钥，提交在仓库根。不用 Gradle 的 debug 签名，因为
+    //  ~/.android/debug.keystore 在 CI 上每跑一次重新生成 —— 签名每次都变，
+    //  用户装了上一版再装下一版就是 INSTALL_FAILED_UPDATE_INCOMPATIBLE，只能
+    //  卸载，而卸载会带走设备 token 和本机离线缓存。
+    //
+    //  密钥公开提交是有意的，理由见 .github/workflows/keystore.yml。
+    signingConfigs {
+        release {
+            def ks = rootProject.file('../../release.keystore')
+            if (ks.exists()) {
+                storeFile ks
+                storePassword 'funread'
+                keyAlias 'funread'
+                keyPassword 'funread'
+            }
+        }
+    }
     buildTypes {
         release {
+            //  没有 keystore 时（fork 没跑过 keystore.yml）回落到 debug 签名：
+            //  那样至少装得上，只是升级要卸载。未签名的 release APK 是装不上的，
+            //  而那种失败发生在用户手机上，不是构建时。
+            signingConfig signingConfigs.release.storeFile != null
+                    ? signingConfigs.release
+                    : signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
