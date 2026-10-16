@@ -25,6 +25,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:packaged": "vue-tsc -b && vite build --mode packaged --outDir dist-packaged",
     "preview": "vite preview",
     "serve": "node bin/cli.js server run",
     "test": "node --test \"tests/*.test.js\""

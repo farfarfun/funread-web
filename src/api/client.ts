@@ -1,3 +1,4 @@
+import { clearSession, loadSession } from "./packaged";
 import type {
   AccountSummary,
   BookInfo,
@@ -7,6 +8,8 @@ import type {
   CheckProgress,
   CheckUpdatesAccepted,
   CollectReport,
+  DeviceToken,
+  DeviceTokenCreated,
   DownloadAccepted,
   DownloadProgress,
   ExploreKind,
@@ -59,9 +62,19 @@ function query(params?: Params): string {
 
 async function request<T>(path: string, init?: RequestInit & { params?: Params }): Promise<T> {
   const { params, ...rest } = init ?? {};
-  const response = await fetch(`/api/v1${path}${query(params)}`, {
+  //  打包版把 Web 资源打进了 app，页面来源是 `http://localhost`，请求用户自己的
+  //  服务器属于**跨站** —— cookie 发不出去（后端 `allow_credentials=False`），
+  //  所以基址来自用户填的地址、凭据是设备 token。
+  //
+  //  `__FUNREAD_PACKAGED__` 是构建期常量：浏览器和 funread light 那两份产物里它
+  //  是字面量 false，下面整段折回原来的同源 `/api/v1` 和原来那个请求头，一个
+  //  字节都不多。为什么是构建期而不是运行时探测，见 `./packaged.ts`。
+  const session = __FUNREAD_PACKAGED__ ? loadSession() : null;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (session) headers.Authorization = `Bearer ${session.token}`;
+  const response = await fetch(`${session ? session.server : ""}/api/v1${path}${query(params)}`, {
     ...rest,
-    headers: { "Content-Type": "application/json", ...rest.headers },
+    headers: { ...headers, ...rest.headers },
   });
   if (!response.ok) {
     let detail = `请求失败（HTTP ${response.status}）`;
@@ -71,11 +84,69 @@ async function request<T>(path: string, init?: RequestInit & { params?: Params }
     } catch {
       // Keep the HTTP fallback when the proxy returns a non-JSON error.
     }
-    if (response.status === 401) throw new UnauthorizedError(detail);
+    if (response.status === 401) {
+      //  后端收到 Bearer 之后**不回落 cookie**，所以打包版的 401 只有一个含义：
+      //  这条 token 不认了（被吊销、账号停用、或者服务器换了库）。留着它只会让
+      //  接下来每个页面各撞一次 401，直接丢掉 —— 路由守卫会把人带回配置页。
+      if (__FUNREAD_PACKAGED__) clearSession();
+      throw new UnauthorizedError(detail);
+    }
     throw new Error(detail);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+/**
+ * 用账号口令直接换一条设备 token（后端的 `POST /auth/tokens/issue`）。
+ * **只有打包版的首次配置会走这里。**
+ *
+ * 不复用 `request()`：那条路的基址和凭据都取自已经存下的会话，而这一刻两者都还
+ * 不存在 —— 服务器地址是用户刚敲进表单的。顺带也绕开了「401 就清掉本地 token」
+ * 那条规则：这里的 401 是「口令不对」，不是「token 失效」。
+ */
+export async function issueDeviceToken(payload: {
+  server: string;
+  username: string;
+  password: string;
+  device_name: string;
+}): Promise<DeviceTokenCreated> {
+  const { server, ...body } = payload;
+  let response: Response;
+  try {
+    response = await fetch(`${server}/api/v1/auth/tokens/issue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    //  fetch 只在网络层失败时抛，而跨站请求被 CORS 挡掉在浏览器里也长这样 ——
+    //  两种都是「这台服务器没按预期应答」，给一条能照着排查的文案。
+    throw new Error(
+      `连不上 ${server}。挨个看一眼：\n` +
+        "· 服务器上的 funread 在跑吗\n" +
+        "· 端口对吗（funread-web 默认 8811，funread-api 默认 18811，两个都行）\n" +
+        "· 手机和服务器在同一个网络里吗",
+    );
+  }
+  if (response.status === 401) throw new UnauthorizedError("账号或口令不对。");
+  if (response.status === 404) {
+    throw new Error(
+      `${server} 上没有 /api/v1/auth/tokens/issue。\n` +
+        "要么这个地址不是 funread，要么服务端太旧 —— 设备 token 是后加的，升级 funread-api 再试。",
+    );
+  }
+  if (!response.ok) {
+    let detail = `签发失败（HTTP ${response.status}）`;
+    try {
+      const parsed = await response.json();
+      if (typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // 非 JSON 的错误（比如反代给的 502 页面）保留 HTTP 兜底。
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<DeviceTokenCreated>;
 }
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
@@ -107,6 +178,12 @@ export const api = {
   adminLogin: (password: string) =>
     request<SessionState>("/auth/admin/login", { method: "POST", ...json({ password }) }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+
+  //  设备 token。浏览器里靠 cookie 会话、打包版里靠自己那条 Bearer，后端两种都
+  //  认，所以这一页在两种形态下都是活的 —— 手机丢了可以在电脑上吊销。
+  devices: () => request<DeviceToken[]>("/auth/tokens"),
+  revokeDevice: (token_id: number) =>
+    request<void>(`/auth/tokens/${token_id}`, { method: "DELETE" }),
 
   //  人员管理。两个端点都要 ADMIN 身份，普通读者拿到的是 403。
   users: () => request<ManagedUser[]>("/auth/users"),

@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# 打包版那一份构建产物（`pnpm run build:packaged`）。和 dist/ 分开放，免得
+# 本地构建过一次打包版之后，`funread-web server run` 端出去的是带 token 逻辑
+# 的那一份 —— 它在浏览器里跑的话会去请求一个根本没配的服务器地址。
+dist-packaged/
 *.tsbuildinfo
 .env.local
 .run/

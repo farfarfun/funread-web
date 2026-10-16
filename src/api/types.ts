@@ -160,6 +160,26 @@ export interface AccountSummary {
   bootstrap: boolean;
 }
 
+/**
+ * 设备 token 列表里的一行（`GET /auth/tokens`）。
+ *
+ * **不含 token 本身** —— 明文只在签发那一次返回，服务端只留 sha256。所以列表上
+ * 认不出哪条是自己：客户端把签发时拿到的 `id` 存在本地，靠它对号。
+ */
+export interface DeviceToken {
+  id: number;
+  device_name: string;
+  /** ISO-8601。 */
+  created_at: string;
+  /** ISO-8601。服务端为了少写库，一小时内的重复访问不刷新这个值。 */
+  last_seen_at: string;
+}
+
+/** 签发响应（`POST /auth/tokens/issue`）。比列表多一个**只出现这一次**的明文。 */
+export interface DeviceTokenCreated extends DeviceToken {
+  token: string;
+}
+
 // ---------------------------------------------------------------- 小说
 
 export interface SourceRef {
