@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口的默认权限。页面来源是打进 app 的本地资源，没有任何 remote 来源被放进来。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

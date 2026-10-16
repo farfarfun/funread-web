@@ -1,0 +1,29 @@
+[package]
+name = "funread-desktop"
+version = "0.0.0"
+description = "funread 桌面打包版：Web 资源打进 app，跨站访问你自己的服务器"
+authors = ["farfarfun"]
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+
+#  版本号不写在这里：它由 tauri.conf.json 的 `version` 指到仓库根的 package.json，
+#  整个仓库只有那一处需要 bump。Cargo 这边留 0.0.0。
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+#  打包版的每个 API 请求都从 Rust 这边发出去（见 src/fetch-bridge.js 顶部），
+#  所以这一版必须带一个真正的 HTTP 客户端 —— light 版那边没有这项开销。
+reqwest = { version = "0.13" }
+
+[profile.release]
+#  同 light 版：体积优先。不加 panic = "abort"，wry 在 macOS 上要靠 unwind 把
+#  Objective-C 异常接住。
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
