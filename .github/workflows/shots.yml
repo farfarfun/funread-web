@@ -1,0 +1,113 @@
+name: shots
+
+#  自动截界面图，提交回 docs/snapshots/。README 和 farfarfun/packages 的包页都引
+#  这里的 raw 地址（那边 site/pages/funread.toml 的 [[shots]] 指到 master 分支）。
+#
+#  **为什么挂在 tag push 上而不是 `release: published`**：这个仓库的 Release 是
+#  ci.yml 的 release job 用 `github.token` 建的，而 GitHub 规定「用 GITHUB_TOKEN
+#  做的事不触发别的 workflow」（防止 workflow 互相递归）。挂 release 事件的话这条
+#  流水线永远不会自己跑起来，而且不会有任何报错 —— 看起来就像配好了。打 tag 是人
+#  做的动作，照常触发。
+#
+#  跑完和 ci.yml 是并行的，两者不互相依赖：截图用的是假后端，不需要等任何产物。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+#  同一时间只允许一条在跑：这条流水线结尾要往 master push，两条并行会有一条因为
+#  非快进被拒。不取消正在跑的那条（它可能已经在 push 了），排队等。
+concurrency:
+  group: shots
+  cancel-in-progress: false
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      #  **checkout master，不是这个 tag。** 触发时 GITHUB_REF 指向 tag，而 tag 是
+      #  游离的提交点，在它上面 commit 推不回任何分支。
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      #  **中文字体。** GitHub 的 ubuntu 镜像里一个中文字体都没有，缺了这一步截出来
+      #  整页是豆腐块 —— 而且不报错，六张图照样生成、照样提交。noto-cjk 是 Noto Sans
+      #  CJK，界面用的 system-ui 字体栈在 Linux 上会落到它。
+      #  fonts-noto-color-emoji 是给界面里那几个 emoji 的，少了同样是方块。
+      - name: 装中文字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
+          fc-cache -f
+          fc-list :lang=zh | head -3
+
+      - run: pnpm install --frozen-lockfile
+
+      #  截的是构建产物而不是 dev server：dev 下 Vite 会注入 HMR 客户端，偶尔还会在
+      #  角落里弹一个错误浮层，那东西会进到图里。
+      - run: pnpm run build
+
+      - name: 装 Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      #  轮询等端口，不用固定 sleep：机器快的时候白等，慢的时候等不够 —— 后者会让
+      #  第一张图截在「还没连上」的状态。
+      - name: 起 preview
+        run: |
+          pnpm run preview &
+          for _ in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://localhost:8811/web; then
+              echo "preview 起来了"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "preview 在 40 秒内没起来" >&2
+          exit 1
+
+      - run: node scripts/shots.mjs docs/snapshots
+
+      #  截图脚本用的是写死的假数据，所以界面没改的话这一步什么都不会提交 ——
+      #  不会每次发版都多一个只有像素变了的提交。真有 diff 的时候，那个 diff 就是
+      #  这一版界面上的实际变化，值得在 PR 里看一眼。
+      - name: 有变化就提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/snapshots
+          if git diff --cached --quiet; then
+            echo "界面没变，没有需要提交的截图"
+            exit 0
+          fi
+          git diff --cached --stat
+          git commit -m "chore: 刷新界面截图（${GITHUB_REF_NAME}）
+
+          由 .github/workflows/shots.yml 自动生成，数据是 scripts/shots.mjs 里的
+          常量，不是真后端。
+
+          Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+          #  期间 master 可能被别的提交推进了（比如 ci.yml 那边），先 rebase 再推。
+          git pull --rebase origin master
+          git push origin HEAD:master
+
+      #  失败时也能看到截了什么。图是二进制，日志里看不出来。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots
+          path: docs/snapshots/*.png
+          if-no-files-found: warn
