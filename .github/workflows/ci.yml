@@ -25,6 +25,15 @@
 #    xxx.dmg」，看着像构建矩阵出了岔子。
 #  - **light** 不进包仓库（装完还要填服务器地址，不适合包管理器分发），名字沿用
 #    原来的 `<形态>-<tag>-<平台>.<后缀>`，Release 页面和各 README 引的都是它。
+#    只有 Linux 那几个多一段架构（`-linux-amd64` / `-linux-arm64`）：这是唯一出
+#    两个架构的平台，不分开两条 job 的 .deb 会叫同一个名字，在 release 那步被
+#    悄悄覆盖掉一个。
+#
+#  light 的 .deb 虽然不单独登记，却会跟着主包一起被收进组织的 APT 源（那边按
+#  `*.deb` 收整个 release），它的 `Package` 字段是 funread-light，和 funread 不撞，
+#  所以 `apt install funread-light` 是成立的。**也正因为这个，light 的 .deb 是
+#  上面那条命名规则的唯一例外**：APT 源那边的 dpkg-scanpackages 按文件名挑文件，
+#  不叫 `<包名>_<版本>_<架构>.deb` 的直接跳过且不出声，所以它跟着规范那套走。
 name: ci
 
 on:
@@ -222,11 +231,20 @@ jobs:
           FORCE_MACOS: ${{ inputs.desktop_macos }}
         run: |
           set -euo pipefail
+          #  Linux 出两个架构。arm64 走 GitHub 的 ARM runner（`-arm` 后缀的标签，
+          #  对公开仓库同样免费），是原生编译不是交叉编译 —— 交叉编译要给目标架构
+          #  准备一套 webkit2gtk 的开发包，比多开一台 runner 麻烦得多。
+          #
+          #  arm64 不出 AppImage：那条路要 bundler 去下 aarch64 版的 linuxdeploy 和
+          #  appimagetool，是 Tauri 在这个架构上最容易坏的一环，而坏了是整条 job 红。
+          #  apt 源要的是 .deb，拿到它就够了；真需要 arm64 的 AppImage 再单独加。
           free='[
-            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":"","args2":""},
-            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04","platform":"linux","bundles":"deb,rpm,appimage","args":"","args2":""},
-            {"app":"funread-light","project":"desktop","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":"","args2":""},
-            {"app":"funread","project":"desktop-packaged","os":"windows-latest","platform":"windows","bundles":"nsis,msi","args":"","args2":""}
+            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04","platform":"linux","arch":"amd64","bundles":"deb,rpm,appimage","args":"","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04","platform":"linux","arch":"amd64","bundles":"deb,rpm,appimage","args":"","args2":""},
+            {"app":"funread-light","project":"desktop","os":"ubuntu-22.04-arm","platform":"linux","arch":"arm64","bundles":"deb,rpm","args":"","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"ubuntu-22.04-arm","platform":"linux","arch":"arm64","bundles":"deb,rpm","args":"","args2":""},
+            {"app":"funread-light","project":"desktop","os":"windows-latest","platform":"windows","arch":"amd64","bundles":"nsis,msi","args":"","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"windows-latest","platform":"windows","arch":"amd64","bundles":"nsis,msi","args":"","args2":""}
           ]'
           #  light 出 universal：下载的人不用分辨自己是 Intel 还是 Apple Silicon。
           #
@@ -235,9 +253,13 @@ jobs:
           #  `args2` 是同一条 job 里的第二趟构建，不是第二台 runner，理由见下面
           #  那两个构建步骤之间的注释。
           paid='[
-            {"app":"funread-light","project":"desktop","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target universal-apple-darwin","args2":""},
-            {"app":"funread","project":"desktop-packaged","os":"macos-latest","platform":"macos","bundles":"app,dmg","args":"--target aarch64-apple-darwin","args2":"--target x86_64-apple-darwin"}
+            {"app":"funread-light","project":"desktop","os":"macos-latest","platform":"macos","arch":"universal","bundles":"app,dmg","args":"--target universal-apple-darwin","args2":""},
+            {"app":"funread","project":"desktop-packaged","os":"macos-latest","platform":"macos","arch":"dual","bundles":"app,dmg","args":"--target aarch64-apple-darwin","args2":"--target x86_64-apple-darwin"}
           ]'
+          #  `arch` 只用来给 artifact 和 Rust 缓存起名，**不参与产物命名**：文件名里
+          #  那一段是 name the bundles 从 cargo 的 target 三元组目录推出来的，和这里
+          #  是两个来源。所以 macOS 那两条写 universal / dual 这种不是架构的值也没事
+          #  —— 它们只需要在矩阵里唯一。
           if [[ "$GITHUB_REF" == refs/tags/v* || "${FORCE_MACOS:-false}" == "true" ]]; then
             include=$(jq -cn --argjson a "$free" --argjson b "$paid" '$a + $b')
           else
@@ -297,8 +319,10 @@ jobs:
         with:
           workspaces: ${{ matrix.project }} -> target
           #  两个工程的依赖树几乎一样但不完全一样（打包版多一棵 reqwest），
-          #  平台之间更是毫无关系。缓存键必须把这两维都带上。
-          key: ${{ matrix.project }}-${{ matrix.platform }}
+          #  平台之间更是毫无关系。缓存键必须把这几维都带上 —— 架构也算一维：
+          #  Linux 的 amd64 和 arm64 是两台机器上编出来的两套 .rlib，共用一个键
+          #  的话它们会互相覆盖，每次都 miss 还白搭一次上传。
+          key: ${{ matrix.project }}-${{ matrix.platform }}-${{ matrix.arch }}
 
       #  打包版装进 app 的就是 Vue 的构建产物，所以 Web 构建是出包的前置条件。
       #  light 版正相反：它运行时才去加载用户服务器上的页面，这一步对它是多余的。
@@ -390,14 +414,33 @@ jobs:
               *)                              arch="$HOST_ARCH" ;;
             esac
 
+            #  light 的名字本来只到平台这一层。Linux 现在出两个架构，不带上架构的话
+            #  amd64 和 arm64 的 .deb 会叫同一个名字 —— 在各自的 artifact 里不冲突，
+            #  下面那个重名检查也拦不住（它只看本条 job 的 release 目录），但 release
+            #  job 是 merge-multiple 合进一个目录的，后下来的直接把前一个盖掉，一声
+            #  不响。macOS 是 universal、Windows 只有 amd64，每个平台仍然一个包，
+            #  名字不动。
+            if [ "$PLATFORM" = linux ]; then
+              slot="${PLATFORM}-${arch}"
+            else
+              slot="$PLATFORM"
+            fi
+
             if [ "$APP" = "funread-light" ]; then
               case "$(basename "$path")" in
-                *.AppImage)  out="${APP}-${TAG}-${PLATFORM}.AppImage" ;;
-                *.deb)       out="${APP}-${TAG}-${PLATFORM}.deb" ;;
-                *.rpm)       out="${APP}-${TAG}-${PLATFORM}.rpm" ;;
-                *.msi)       out="${APP}-${TAG}-${PLATFORM}.msi" ;;
-                *-setup.exe) out="${APP}-${TAG}-${PLATFORM}-setup.exe" ;;
-                *.dmg)       out="${APP}-${TAG}-${PLATFORM}.dmg" ;;
+                *.AppImage)  out="${APP}-${TAG}-${slot}.AppImage" ;;
+                #  .deb 是 light 这套命名里唯一的例外，按规范那套走。它虽然不在
+                #  farfarfun/packages 的清单里，却会跟着主包一起被收进组织的 APT 源
+                #  （那边按 `*.deb` 收整个 release），而 dpkg-scanpackages 是**按文件名**
+                #  挑文件的：不叫 `<包名>_<版本>_<架构>.deb` 的一律跳过，不报错也不警告。
+                #  1.1.126 的 `funread-light-v1.1.126-linux.deb` 就是这么丢的 ——
+                #  pool 里 9 个包、索引里只写了 8 条，APT 源那边整次构建红在条数核对上。
+                #  其余几种格式没有谁按文件名解析，保持 light 自己的写法。
+                *.deb)       out="${APP}_${VERSION}_${arch}.deb" ;;
+                *.rpm)       out="${APP}-${TAG}-${slot}.rpm" ;;
+                *.msi)       out="${APP}-${TAG}-${slot}.msi" ;;
+                *-setup.exe) out="${APP}-${TAG}-${slot}-setup.exe" ;;
+                *.dmg)       out="${APP}-${TAG}-${slot}.dmg" ;;
                 #  bundle 目录里还有一堆别的 .exe（NSIS 自己的中间产物之类），
                 #  不在上面名单里的一律不要。
                 *) continue ;;
@@ -441,9 +484,11 @@ jobs:
           fi
           ls -l release
 
+      #  名字里要带架构：upload-artifact@v4 不再合并同名 artifact，两条 Linux job
+      #  撞上同一个名字是直接报错。
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.app }}-${{ matrix.platform }}
+          name: desktop-${{ matrix.app }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: release/*
           if-no-files-found: error
 
@@ -515,17 +560,38 @@ jobs:
           | 平台 | 打包版 | light |
           | --- | --- | --- |
           | Android | `funread-<ver>-android.apk` | `funread-light-<tag>.apk` |
-          | Linux | `funread_<ver>_amd64.deb` / `funread-<ver>-linux-amd64.AppImage` / `.rpm` | `funread-light-<tag>-linux.AppImage` / `.deb` / `.rpm` |
+          | Linux | `funread_<ver>_<arch>.deb` / `funread-<ver>-linux-amd64.AppImage` / `.rpm` | `funread-light_<ver>_<arch>.deb` / `funread-light-<tag>-linux-<arch>.AppImage` / `.rpm` |
           | Windows | `funread-<ver>-windows-amd64-setup.exe` / `-setup.msi` | `funread-light-<tag>-windows-setup.exe` / `.msi` |
           | macOS | `funread-<ver>-macos-arm64.dmg` / `-amd64.dmg` | `funread-light-<tag>-macos.dmg` |
+
+          Linux 两个架构都有：`amd64` 是常见的 PC 和服务器，`arm64` 是树莓派、
+          ARM 服务器和装了 Linux 的 Apple Silicon。AppImage 只出 amd64。
 
           打包版的文件名不带 `v`：它要进 farfarfun 的 APT 源和 Homebrew tap，那边
           按文件名认版本和架构。macOS 的包因此**分架构**：`arm64` 给 M 系列芯片，
           `amd64` 给 Intel。light 的 dmg 还是 universal 包，两种芯片通用。桌面端只在
           打 tag 时才构建 macOS，所以个别版本可能没有 dmg。
 
+          light 的 `.deb` 跟着打包版用同一套命名（不带 `v`、下划线分隔）：它也会进
+          APT 源，而那边按文件名索引，换一种写法就会被无声地漏掉。light 的其他格式
+          仍然是 `funread-light-<tag>-…` 那套。
+
           `SHA256SUMS` 覆盖上面所有附件。下完校验一下：
           `sha256sum -c SHA256SUMS --ignore-missing`。
+
+          ## 也可以用包管理器装
+
+          桌面打包版收进了 farfarfun 的 APT 源和 Homebrew tap，装过一次之后升级就是
+          `apt upgrade` / `brew upgrade`，不用再回这个页面下文件。加源的办法见
+          <https://farfarfun.github.io/packages/>。
+
+          ```bash
+          sudo apt install funread          # Linux，amd64 / arm64
+          sudo apt install funread-light    # 同一个源里的 light 版
+          brew install --cask funread       # macOS
+          ```
+
+          Android 和 Windows 还是从下面的附件装。
 
           ## 所有产物都没有签名
 
