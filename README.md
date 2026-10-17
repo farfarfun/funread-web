@@ -2,6 +2,17 @@
 
 [funread-api](https://github.com/farfarfun/funread-api)（依赖 [funread](https://github.com/farfarfun/funread) 核心库）的采集源管理界面。
 
+<p align="center">
+  <img src="docs/snapshots/shelf-dark.png" alt="书架" width="250">
+  <img src="docs/snapshots/read-dark.png" alt="正文" width="250">
+  <img src="docs/snapshots/admin-dark.png" alt="采集源管理" width="250">
+</p>
+
+<p align="center"><sub>
+截图由 <a href="scripts/shots.mjs"><code>scripts/shots.mjs</code></a> 在每次打 tag 时自动重截（<a href=".github/workflows/shots.yml">shots.yml</a>）。
+里面的书名和正文都是脚本里写死的假数据 —— funread 不自带任何内容，读的是你自己配的书源。
+</sub></p>
+
 | 组件 | 默认地址 |
 | --- | --- |
 | 前端（静态页面 + 内部 API 转发） | `http://127.0.0.1:8811` |

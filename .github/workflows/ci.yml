@@ -269,7 +269,8 @@ jobs:
           echo "$include" | jq .
 
   desktop:
-    name: desktop (${{ matrix.app }} · ${{ matrix.platform }})
+    #  名字里带 arch，否则两条 Linux job 在列表里一模一样，看不出红的是哪个架构。
+    name: desktop (${{ matrix.app }} · ${{ matrix.platform }}/${{ matrix.arch }})
     needs: desktop-matrix
     runs-on: ${{ matrix.os }}
     strategy:
