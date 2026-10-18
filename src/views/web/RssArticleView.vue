@@ -14,6 +14,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
 import type { RssArticleDetail } from "../../api/types";
+import MediaPlayer from "../../components/web/MediaPlayer.vue";
 import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
@@ -264,9 +265,20 @@ onMounted(load);
       <p v-if="article.pub_date" class="article__date" :style="{ color: colors.muted }">
         {{ formatFeedDate(article.pub_date) }}
       </p>
+      <!-- 播客 / 视频附件放正文前面：它才是这条内容的主体，文字多半只是 show notes -->
+      <MediaPlayer
+        v-if="article.media_url"
+        :url="article.media_url"
+        :type="article.media_type"
+        :poster="article.image"
+      />
       <!-- eslint-disable-next-line vue/no-v-html -- 已经过 sanitize() 白名单过滤 -->
       <div class="article__html" v-html="safeHtml" />
-      <p v-if="!safeHtml.trim()" class="article__empty" :style="{ color: colors.muted }">
+      <p
+        v-if="!safeHtml.trim() && !article.media_url"
+        class="article__empty"
+        :style="{ color: colors.muted }"
+      >
         这篇文章没有可显示的正文。
         <a :href="article.link" target="_blank" rel="noopener noreferrer">在浏览器里打开</a>
       </p>
