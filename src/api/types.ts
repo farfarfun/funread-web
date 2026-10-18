@@ -429,6 +429,9 @@ export interface RssArticle {
   pub_date: string;
   description: string;
   image: string;
+  /** 附件里的音频或视频（播客、视频 feed）。纯文章与 Legado 规则源都是空串。 */
+  media_url: string;
+  media_type: string;
   read: boolean;
   favorited: boolean;
   variables: Record<string, string>;
@@ -450,6 +453,8 @@ export interface RssArticleDetail {
   pub_date: string;
   description: string;
   image: string;
+  media_url: string;
+  media_type: string;
   content_html: string;
 }
 
