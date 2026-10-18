@@ -471,6 +471,18 @@ export interface RssArticleDetail {
   content_html: string;
 }
 
+export interface RssHistoryItem {
+  sub_id: string;
+  article_key: string;
+  title: string;
+  link: string;
+  pub_date: string;
+  image: string;
+  /** 最后一次标已读的时间，列表按它倒排。 */
+  read_at: string;
+  favorited: boolean;
+}
+
 export interface RssFavorite {
   sub_id: string;
   article_key: string;

@@ -22,6 +22,7 @@ import type {
   RssArticlePage,
   RssCategory,
   RssFavorite,
+  RssHistoryItem,
   RssSourcePage,
   ScanReport,
   SourceTestAccepted,
@@ -371,4 +372,5 @@ export const api = {
       ...json({ article_keys }),
     }),
   favorites: (sub_id = "") => request<RssFavorite[]>("/rss/favorites", { params: { sub_id } }),
+  history: (limit = 100) => request<RssHistoryItem[]>("/rss/history", { params: { limit } }),
 };

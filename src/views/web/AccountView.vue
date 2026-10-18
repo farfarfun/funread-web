@@ -164,6 +164,10 @@ onMounted(() => {
         <div class="row"><span>收藏的文章</span></div>
       </n-list-item>
 
+      <n-list-item @click="router.push({ name: 'rss-history' })">
+        <div class="row"><span>阅读历史</span></div>
+      </n-list-item>
+
       <n-list-item @click="router.push({ name: 'rss-sources' })">
         <div class="row"><span>订阅源目录</span></div>
       </n-list-item>

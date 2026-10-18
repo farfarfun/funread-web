@@ -72,6 +72,12 @@ const routes: RouteRecordRaw[] = [
         meta: { tab: "rss", title: "收藏" },
       },
       {
+        path: "rss/history",
+        name: "rss-history",
+        component: () => import("../views/web/HistoryView.vue"),
+        meta: { tab: "rss", title: "阅读历史" },
+      },
+      {
         path: "rss/sources",
         name: "rss-sources",
         component: () => import("../views/web/RssSourcesView.vue"),
