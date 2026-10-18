@@ -417,6 +417,19 @@ export interface Subscription {
   preview?: number | null;
 }
 
+export interface OpmlImportResult {
+  imported: number;
+  /** 之前就订过的，或者不是 http(s) 地址的。 */
+  skipped: number;
+  total: number;
+}
+
+export interface OpmlExport {
+  opml: string;
+  /** 只有 feed 订阅——归档源没有别的阅读器认得的地址。 */
+  count: number;
+}
+
 export interface RssCategory {
   name: string;
   url: string;

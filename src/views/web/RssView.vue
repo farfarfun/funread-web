@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 我的订阅。两种来源（归档源 / 自填 feed）在这里是同一个列表。 */
-import { AddOutline, AlertCircle, StarOutline } from "@vicons/ionicons5";
+import { AddOutline, AlertCircle, EllipsisHorizontal, StarOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, onActivated, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -28,6 +28,60 @@ const subscribing = ref(false);
  * 图标，详情进弹窗。
  */
 const errorDetail = ref<Subscription | null>(null);
+const opmlInput = ref<HTMLInputElement | null>(null);
+const importing = ref(false);
+
+//  「更多」菜单：OPML 导入导出用得很少，不值得在顶栏占两个按钮位
+const moreOptions = [
+  { label: "导入 OPML", key: "import" },
+  { label: "导出 OPML", key: "export" },
+];
+
+function onMore(key: string) {
+  if (key === "import") opmlInput.value?.click();
+  if (key === "export") exportOpml();
+}
+
+async function importOpml(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  importing.value = true;
+  try {
+    const result = await api.importOpml(await file.text());
+    //  导入不验证地址，所以这句不能说「都能用」——挂掉的源会在打开时报错
+    message.success(
+      result.imported
+        ? `导入了 ${result.imported} 个订阅${result.skipped ? `，跳过 ${result.skipped} 个已有的` : ""}`
+        : "没有新的订阅可导入",
+    );
+    await load();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "导入失败");
+  } finally {
+    importing.value = false;
+  }
+}
+
+async function exportOpml() {
+  try {
+    const result = await api.exportOpml();
+    if (!result.count) {
+      message.info("没有可导出的 feed 订阅（归档源没有通用地址，不在导出之列）");
+      return;
+    }
+    const blob = new Blob([result.opml], { type: "text/x-opml" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "funread-subscriptions.opml";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "导出失败");
+  }
+}
 const showError = computed({
   get: () => errorDetail.value !== null,
   set: (value: boolean) => {
@@ -97,8 +151,20 @@ onActivated(load);
         <n-button quaternary circle aria-label="添加订阅" @click="showAdd = true">
           <template #icon><n-icon><AddOutline /></n-icon></template>
         </n-button>
+        <n-dropdown :options="moreOptions" trigger="click" @select="onMore">
+          <n-button quaternary circle aria-label="更多" :loading="importing">
+            <template #icon><n-icon><EllipsisHorizontal /></n-icon></template>
+          </n-button>
+        </n-dropdown>
       </template>
     </TopBar>
+    <input
+      ref="opmlInput"
+      type="file"
+      accept=".opml,.xml,text/xml,text/x-opml"
+      class="visually-hidden"
+      @change="importOpml"
+    />
 
     <SkeletonList v-if="loading" :rows="4" :cover="false" />
 
@@ -212,6 +278,14 @@ onActivated(load);
 </template>
 
 <style scoped>
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
 .state {
   padding: var(--space-6) var(--space-4);
 }

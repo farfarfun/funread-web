@@ -39,6 +39,8 @@ import type {
   SwitchSourcePage,
   SwitchSourceResult,
   TocOut,
+  OpmlExport,
+  OpmlImportResult,
 } from "./types";
 
 type Params = Record<string, string | number | boolean | null | undefined>;
@@ -313,6 +315,9 @@ export const api = {
     }),
   unsubscribe: (sub_id: string) =>
     request<void>(`/rss/subscriptions/${sub_id}`, { method: "DELETE" }),
+  importOpml: (opml: string) =>
+    request<OpmlImportResult>("/rss/subscriptions/import", { method: "POST", ...json({ opml }) }),
+  exportOpml: () => request<OpmlExport>("/rss/subscriptions/export"),
   rssCategories: (sub_id: string) =>
     request<RssCategory[]>(`/rss/subscriptions/${sub_id}/categories`),
   rssArticles: (params: {
