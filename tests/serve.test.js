@@ -132,6 +132,21 @@ describe("reverse proxy", () => {
       await new Promise((resolve) => isolated.close(resolve));
     }
   });
+
+  it("handles an HTTPS backend without crashing", async () => {
+    const isolated = await listen({
+      root,
+      backend: "https://127.0.0.1:1",
+      host: "127.0.0.1",
+      port: 0,
+    });
+    try {
+      const response = await fetchText(`http://127.0.0.1:${isolated.address().port}/api/v1/x`);
+      assert.equal(response.status, 502);
+    } finally {
+      isolated.close();
+    }
+  });
 });
 
 describe("static serving", () => {

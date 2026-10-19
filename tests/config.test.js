@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   ConfigError,
   DEFAULT_BACKEND,
+  DEFAULT_HOST,
   DEFAULT_PORT,
   describeIgnoredEnv,
   resolveSettings,
@@ -60,6 +61,7 @@ describe("settings resolution", () => {
   it("falls back to the hardcoded defaults", () => {
     const settings = resolveSettings({});
     assert.equal(settings.port, DEFAULT_PORT);
+    assert.equal(settings.host, DEFAULT_HOST);
     assert.equal(settings.backend, DEFAULT_BACKEND);
     assert.equal(
       settings.configPath,

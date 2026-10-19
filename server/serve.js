@@ -15,6 +15,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 
 import { PROXY_PREFIXES } from "./config.js";
@@ -60,7 +61,7 @@ function proxy(request, response, backend) {
   headers["x-forwarded-host"] = request.headers.host ?? "";
   headers["x-forwarded-proto"] = "http";
 
-  const upstream = http.request(
+  const upstream = (target.protocol === "https:" ? https : http).request(
     {
       protocol: target.protocol,
       hostname: target.hostname,

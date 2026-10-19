@@ -42,7 +42,7 @@ import path from "node:path";
 
 export const CLI_NAME = "funread-web";
 export const DEFAULT_PORT = 8811;
-export const DEFAULT_HOST = "0.0.0.0";
+export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_BACKEND = "http://127.0.0.1:18811";
 
 /** Paths the web server hands to the backend instead of serving itself. */

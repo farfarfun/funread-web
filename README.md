@@ -18,6 +18,10 @@
 | 前端（静态页面 + 内部 API 转发） | `http://127.0.0.1:8811` |
 | `funread-api` 后端 | `http://127.0.0.1:18811` |
 
+生产态 Web 服务默认只监听本机。需要手机或局域网设备访问时，先在后端
+`config.toml` 配置 `[auth] password` 并注册首个管理员账号，再在 Web 服务的
+`config.toml` 设置 `[server] host = "0.0.0.0"`。
+
 ## 快速开始
 
 ```bash
