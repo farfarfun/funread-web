@@ -6,12 +6,12 @@
   --space-5: 24px;
   --space-6: 32px;
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --focus-ring: #6d5ef8;
-  --bg-canvas: #f2f3f6;
+  --focus-ring: #167a69;
+  --bg-canvas: #f5f7f5;
 }
 
 :root.dark {
-  --bg-canvas: #0b0c10;
+  --bg-canvas: #121a18;
 }
 
 html,

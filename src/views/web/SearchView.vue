@@ -38,6 +38,7 @@ const loadingMore = ref(false);
 const error = ref("");
 const page = ref<SearchPage | null>(null);
 const items = ref<SearchBook[]>([]);
+let searchVersion = 0;
 
 const hasMore = computed(() => {
   const current = page.value;
@@ -60,15 +61,18 @@ async function run(term?: string) {
   error.value = "";
   page.value = null;
   items.value = [];
+  const version = ++searchVersion;
   try {
     const result = await api.search({ keyword: value, limit: PAGE_SIZE, offset: 0 });
+    if (version !== searchVersion) return;
     page.value = result;
     items.value = result.items;
     remember(value);
   } catch (reason) {
+    if (version !== searchVersion) return;
     error.value = reason instanceof Error ? reason.message : "搜索失败";
   } finally {
-    loading.value = false;
+    if (version === searchVersion) loading.value = false;
   }
 }
 
@@ -98,9 +102,11 @@ async function more() {
 useShortcuts({
   "/": () => input.value?.focus(),
   Escape: () => {
+    searchVersion += 1;
     keyword.value = "";
     page.value = null;
     items.value = [];
+    loading.value = false;
   },
 });
 

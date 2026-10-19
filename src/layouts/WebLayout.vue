@@ -25,19 +25,19 @@ const showNav = computed(() => !route.meta.immersive && !route.meta.bare);
 const showRail = computed(() => showNav.value && isWide.value);
 const showTabs = computed(() => showNav.value && !isWide.value);
 
-const primary = "#6D5EF8";
+const primary = "#167A69";
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     primaryColor: primary,
-    primaryColorHover: "#7C6FFA",
-    primaryColorPressed: "#5B4EE5",
-    primaryColorSuppl: "rgba(109, 94, 248, 0.16)",
-    borderRadius: "10px",
+    primaryColorHover: "#1B927E",
+    primaryColorPressed: "#116557",
+    primaryColorSuppl: "rgba(22, 122, 105, 0.14)",
+    borderRadius: "8px",
     borderRadiusSmall: "6px",
     fontFamily:
       "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
   },
-  Card: { borderRadius: "12px" },
+  Card: { borderRadius: "8px" },
   Button: { borderRadiusMedium: "8px", borderRadiusSmall: "6px", borderRadiusTiny: "6px" },
   Input: { borderRadius: "8px" },
 };

@@ -21,9 +21,6 @@ import { api } from "../../api/client";
 import type { PoolPage, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
 import { formatTime, fromNow } from "../../utils/display";
 
-defineProps<{ dark: boolean }>();
-defineEmits<{ toggleTheme: [] }>();
-
 const message = useMessage();
 const route = useRoute();
 
@@ -53,6 +50,24 @@ const TYPE_OPTIONS = [
 ];
 
 const summary = computed(() => page.value?.summary);
+const allVisibleSelected = computed(
+  () => Boolean(page.value?.items.length) && page.value!.items.every((item) => selectedIds.value.includes(item.url_id)),
+);
+const partlyVisibleSelected = computed(
+  () => !allVisibleSelected.value && Boolean(page.value?.items.some((item) => selectedIds.value.includes(item.url_id))),
+);
+
+function toggleVisible(checked: boolean) {
+  const ids = new Set(selectedIds.value);
+  for (const item of page.value?.items ?? []) checked ? ids.add(item.url_id) : ids.delete(item.url_id);
+  selectedIds.value = [...ids];
+}
+
+function toggleVisibleItem(urlId: number, checked: boolean) {
+  const ids = new Set(selectedIds.value);
+  checked ? ids.add(urlId) : ids.delete(urlId);
+  selectedIds.value = [...ids];
+}
 
 // ----------------------------------------------------------------- 批量测试
 //
@@ -163,7 +178,7 @@ function setSelection(keys: Array<string | number>) {
   selectedIds.value = keys.map(Number);
 }
 
-async function scanArchive() {
+async function scanSources() {
   if (scanning.value) return;
   scanning.value = true;
   try {
@@ -185,12 +200,14 @@ async function setSelectedEnabled(enabled: boolean) {
   if (bulkBusy.value || !selectedIds.value.length) return;
   bulkBusy.value = true;
   const failed: number[] = [];
-  for (const urlId of selectedIds.value) {
-    try {
-      await api.patchPoolSource(sourceType.value, urlId, { enabled });
-    } catch {
-      failed.push(urlId);
-    }
+  for (let start = 0; start < selectedIds.value.length; start += 8) {
+    const batch = selectedIds.value.slice(start, start + 8);
+    const results = await Promise.allSettled(
+      batch.map((urlId) => api.patchPoolSource(sourceType.value, urlId, { enabled })),
+    );
+    results.forEach((result, index) => {
+      if (result.status === "rejected") failed.push(batch[index]!);
+    });
   }
   selectedIds.value = failed;
   await load();
@@ -313,13 +330,11 @@ onMounted(load);
     <header class="head">
       <div>
         <h1 class="head__title">候选源池</h1>
-        <p class="head__sub">
-          采集下来的**单个源**的可用性与启停。和「采集源」页不是一回事 ——
-          那一页管的是产出源列表的 URL。
-        </p>
+        <p class="head__sub">书源和订阅源规则</p>
       </div>
       <n-space>
-        <n-button :loading="scanning" :disabled="Boolean(testing) || bulkBusy" @click="scanArchive">
+        <n-button type="primary" :loading="scanning" :disabled="Boolean(testing) || bulkBusy" @click="scanSources">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
           扫描{{ sourceType === "book" ? "书源" : "订阅源" }}
         </n-button>
         <n-button quaternary circle aria-label="刷新" :loading="loading" @click="load">
@@ -354,12 +369,6 @@ onMounted(load);
         <span class="stat__label">可浏览分类</span>
       </div>
     </section>
-
-    <p class="note">
-      「已启用」是扫描时的静态判定（规则完整，所需运行时可用）；
-      <b>「实跑成功过」才是真实可用性</b> —— 采集侧的可达标记只代表某次 GET 过站点
-      首页，实测预测力极差。
-    </p>
 
     <div class="filters">
       <n-select v-model:value="sourceType" :options="TYPE_OPTIONS" class="filters__type" :disabled="scanning || bulkBusy || Boolean(testing)" @update:value="reload" />
@@ -405,14 +414,6 @@ onMounted(load);
           会把当前类型下所有源的测试次数与成功次数清零，排序回到未测状态。确定吗？
         </n-popconfirm>
       </div>
-      <p class="testbar__hint">
-        {{
-          sourceType === "book"
-            ? "逐个用固定关键词「我的」搜一次，搜出书才算成功。"
-            : "逐个真抓一次文章列表，解析出文章才算成功。"
-        }}
-        串行执行不并发——这些请求直接打在别人站点上。用户真实使用的结果也计入同一组统计。
-      </p>
       <n-progress
         v-if="testing"
         type="line"
@@ -436,6 +437,32 @@ onMounted(load);
       />
     </div>
 
+    <div v-if="page?.items.length" class="mobile-pool-list">
+      <n-checkbox :checked="allVisibleSelected" :indeterminate="partlyVisibleSelected" @update:checked="toggleVisible">选择当前页</n-checkbox>
+      <article v-for="item in page.items" :key="item.url_id" class="mobile-pool">
+        <div class="mobile-pool__head">
+          <n-checkbox
+            :checked="selectedIds.includes(item.url_id)"
+            :aria-label="`选择 ${item.name || `源 ${item.url_id}`}`"
+            @update:checked="(checked: boolean) => toggleVisibleItem(item.url_id, checked)"
+          />
+          <strong>{{ item.name || `源 ${item.url_id}` }}</strong>
+          <n-switch :value="item.enabled" size="small" :aria-label="`${item.enabled ? '停用' : '启用'} ${item.name || item.url_id}`" @update:value="(value: boolean) => patch(item, { enabled: value })" />
+        </div>
+        <div class="mobile-pool__meta">
+          <span v-if="!item.is_complete">规则不全</span>
+          <span v-if="item.needs_js">需要 JS</span>
+          <span v-if="item.has_explore">可浏览</span>
+          <span v-if="item.last_ok_at">成功 · {{ fromNow(item.last_ok_at) }}</span>
+          <span v-else-if="item.fail_count">失败 {{ item.fail_count }} 次</span>
+          <span v-else>未实跑</span>
+          <span v-if="item.success_rate !== null">测试 {{ Math.round(item.success_rate * 100) }}%</span>
+        </div>
+        <div v-if="item.last_error" class="mobile-pool__error">{{ item.last_error }}</div>
+        <n-button v-if="item.fail_count" size="small" quaternary class="mobile-pool__reset" @click="patch(item, { reset_failures: true })">清失败记录</n-button>
+      </article>
+    </div>
+
     <n-pagination
       v-if="page && page.total > pageSize"
       v-model:page="pageNo"
@@ -449,9 +476,7 @@ onMounted(load);
 
 <style scoped>
 .pool {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--space-4);
+  width: 100%;
 }
 
 .head {
@@ -478,17 +503,19 @@ onMounted(load);
 
 .summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .stat {
-  padding: var(--space-3);
-  text-align: center;
-  background: var(--surface-sunken);
-  border-radius: 8px;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-right: 1px solid var(--border-subtle);
 }
+
+.stat:last-child { border-right: 0; }
 
 .stat__value {
   display: block;
@@ -508,13 +535,6 @@ onMounted(load);
 
 .stat--bad .stat__value {
   color: #d03050;
-}
-
-.note {
-  margin: 0 0 var(--space-3);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-muted);
 }
 
 .filters {
@@ -538,8 +558,9 @@ onMounted(load);
   gap: 6px;
   padding: var(--space-3, 12px);
   margin-bottom: var(--space-3, 12px);
-  background: rgba(128, 128, 128, 0.06);
-  border-radius: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
 }
 
 .testbar__main {
@@ -551,12 +572,6 @@ onMounted(load);
 
 .testbar__limit {
   width: 110px;
-}
-
-.testbar__hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted, #888);
 }
 
 .alert {
@@ -582,5 +597,39 @@ onMounted(load);
 
 :deep(.warn) {
   color: #f0a020;
+}
+
+.mobile-pool-list { display: none; }
+
+@media (max-width: 900px) {
+  .head { align-items: flex-start; }
+  .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stat:nth-child(3) { border-right: 0; }
+  .stat:nth-child(-n+3) { border-bottom: 1px solid var(--border-subtle); }
+}
+
+@media (max-width: 540px) {
+  .head { flex-direction: column; }
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(3) { border-right: 1px solid var(--border-subtle); }
+  .stat:nth-child(even) { border-right: 0; }
+  .stat:nth-child(4) { border-bottom: 1px solid var(--border-subtle); }
+  .filters__type, .filters__state { flex: 1; width: auto; }
+  .filters .n-input { flex-basis: 100%; }
+  .table-scroll { display: none; }
+  .mobile-pool-list { display: grid; gap: 10px; }
+  .mobile-pool {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+  .mobile-pool__head { display: flex; gap: 10px; align-items: center; }
+  .mobile-pool__head strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  .mobile-pool__meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--text-muted); }
+  .mobile-pool__error { overflow-wrap: anywhere; font-size: 12px; color: var(--danger); }
+  .mobile-pool__reset { justify-self: start; }
 }
 </style>

@@ -38,14 +38,13 @@ function goBack() {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 52px;
-  padding: 0 var(--space-3);
+  min-height: 58px;
+  padding: 0 var(--space-4);
   /* 刘海屏横屏时左右也要让 */
-  padding-left: max(var(--space-3), env(safe-area-inset-left));
-  padding-right: max(var(--space-3), env(safe-area-inset-right));
+  padding-left: max(var(--space-4), env(safe-area-inset-left));
+  padding-right: max(var(--space-4), env(safe-area-inset-right));
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
 }
 
 .top-bar__back {
@@ -75,8 +74,8 @@ function goBack() {
   flex: 1;
   margin: 0;
   overflow: hidden;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 650;
   white-space: nowrap;
   text-overflow: ellipsis;
 }

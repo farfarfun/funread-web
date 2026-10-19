@@ -180,10 +180,6 @@ onActivated(load);
           </n-button>
           <n-button @click="showAdd = true">贴一个 feed 地址</n-button>
         </div>
-        <p class="hint">
-          归档里的订阅源有一部分需要浏览器环境或 JS，当前版本只列能直接解析的那些；
-          自己贴标准 feed 地址（RSS / Atom）则一定可用。
-        </p>
       </template>
     </n-empty>
 

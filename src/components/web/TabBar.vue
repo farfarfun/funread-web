@@ -43,7 +43,6 @@ const active = computed(() => route.meta.tab as string | undefined);
   border-top: 1px solid var(--border-subtle);
   /* 手势条占的那一块也要让出来 */
   padding-bottom: env(safe-area-inset-bottom, 0);
-  backdrop-filter: blur(12px);
 }
 
 .tab {
@@ -58,10 +57,12 @@ const active = computed(() => route.meta.tab as string | undefined);
   color: var(--text-muted);
   text-decoration: none;
   transition: color 0.15s var(--ease);
+  border-top: 2px solid transparent;
 }
 
 .tab--active {
   color: var(--accent);
+  border-top-color: var(--accent);
 }
 
 .tab__label {

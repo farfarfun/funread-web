@@ -1,11 +1,5 @@
 <script setup lang="ts">
-/**
- * 订阅源目录：浏览归档里**能直接解析**的 Legado 订阅源。
- *
- * 必须把「为什么只有这么几个」说清楚：归档一共 1,344 个源，纯 Python 能跑的
- * 只有 142 个（10.6%），其余要么规则不全、要么需要 JS、要么是 WebView 型。
- * 不解释的话这页看着像个坏了的列表。
- */
+/** 订阅源目录：只列出可直接解析的源。 */
 import { SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { onMounted, ref } from "vue";
@@ -124,10 +118,7 @@ onMounted(() => {
     </n-empty>
 
     <template v-else>
-      <p class="stats">
-        共 {{ total }} 个可直接解析的源。归档里还有大量源需要 JS 或浏览器环境，
-        当前版本不列出来 —— 列出来也点不开。
-      </p>
+      <p class="stats">{{ total }} 个可订阅源</p>
 
       <n-list hoverable>
         <n-list-item v-for="source in items" :key="source.url_id">

@@ -13,15 +13,17 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import { TABS } from "./navigation";
+import { useAuth } from "../../composables/useAuth";
 
 const route = useRoute();
 const active = computed(() => route.meta.tab as string | undefined);
+const { isAdmin } = useAuth();
 </script>
 
 <template>
   <aside class="rail">
     <div class="rail__inner">
-      <p class="rail__brand">funread</p>
+      <p class="rail__brand"><span class="rail__mark">f</span> funread</p>
       <nav aria-label="主导航">
         <RouterLink
           v-for="tab in TABS"
@@ -36,14 +38,7 @@ const active = computed(() => route.meta.tab as string | undefined);
         </RouterLink>
       </nav>
 
-      <!-- 桌面上快捷键是主要交互方式，所以把它列出来而不是让人猜 -->
-      <div class="rail__hints">
-        <p class="rail__hints-title">快捷键</p>
-        <p><kbd>/</kbd> 搜索</p>
-        <p><kbd>←</kbd> <kbd>→</kbd> 翻章</p>
-        <p><kbd>t</kbd> 目录 · <kbd>s</kbd> 设置</p>
-        <p><kbd>Esc</kbd> 关闭 / 返回</p>
-      </div>
+      <RouterLink v-if="isAdmin" to="/admin/sources" class="rail__admin">管理中心</RouterLink>
     </div>
   </aside>
 </template>
@@ -52,6 +47,7 @@ const active = computed(() => route.meta.tab as string | undefined);
 .rail {
   flex-shrink: 0;
   width: var(--rail-width);
+  background: var(--surface-raised);
   border-right: 1px solid var(--border-subtle);
 }
 
@@ -60,27 +56,41 @@ const active = computed(() => route.meta.tab as string | undefined);
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
   height: 100dvh;
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-5) var(--space-3);
 }
 
 .rail__brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
   margin: 0;
   padding-left: var(--space-2);
   font-size: 18px;
   font-weight: 700;
 }
 
+.rail__mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: white;
+  background: #167a69;
+  border-radius: 8px;
+}
+
 .rail__item {
   display: flex;
   gap: var(--space-3);
   align-items: center;
-  padding: 10px var(--space-2);
+  min-height: 44px;
+  padding: 10px var(--space-3);
   font-size: 14px;
   color: var(--text-muted);
   text-decoration: none;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .rail__item:hover {
@@ -90,32 +100,15 @@ const active = computed(() => route.meta.tab as string | undefined);
 .rail__item--active {
   font-weight: 600;
   color: var(--accent);
-  background: var(--surface-sunken);
+  background: var(--accent-soft);
 }
 
-.rail__hints {
+.rail__admin {
   margin-top: auto;
-  padding-left: var(--space-2);
-  font-size: 11px;
-  line-height: 1.9;
+  padding: 12px var(--space-3);
+  font-size: 13px;
   color: var(--text-muted);
-}
-
-.rail__hints-title {
-  margin: 0 0 2px;
-  font-weight: 600;
-}
-
-.rail__hints p {
-  margin: 0;
-}
-
-kbd {
-  padding: 1px 5px;
-  font-family: inherit;
-  font-size: 10px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  text-decoration: none;
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

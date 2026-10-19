@@ -3,9 +3,8 @@ import {
   AddOutline,
   CloudUploadOutline,
   EllipsisHorizontalOutline,
-  MoonOutline,
   RefreshOutline,
-  SunnyOutline,
+  SearchOutline,
 } from "@vicons/ionicons5";
 import type { DropdownOption } from "naive-ui";
 import { useDialog, useMessage } from "naive-ui";
@@ -14,9 +13,6 @@ import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../../api/client";
 import type { Source, SourceType } from "../../api/types";
 import { formatTime, fromNow, SOURCE_TYPE_LABEL } from "../../utils/display";
-
-defineProps<{ dark: boolean }>();
-defineEmits<{ toggleTheme: [] }>();
 
 const message = useMessage();
 const dialog = useDialog();
@@ -33,7 +29,13 @@ const sourceTypeOptions = Object.entries(SOURCE_TYPE_LABEL).map(([value, label])
 
 const PAGE_FETCH_SIZE = 200;
 const allSources = ref<Source[]>([]);
-const total = computed(() => allSources.value.length);
+const sourceQuery = ref("");
+const filteredSources = computed(() =>
+  allSources.value.filter((source) =>
+    source.url.toLowerCase().includes(sourceQuery.value.trim().toLowerCase()),
+  ),
+);
+const total = computed(() => filteredSources.value.length);
 const page = ref(1);
 const size = ref(20);
 const loading = ref(false);
@@ -57,7 +59,7 @@ async function refresh(): Promise<void> {
     allSources.value = collected;
     const currentIds = new Set(collected.map((source) => source.id));
     selectedIds.value = selectedIds.value.filter((id) => currentIds.has(id));
-    page.value = Math.min(page.value, Math.max(1, Math.ceil(collected.length / size.value)));
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / size.value)));
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : String(reason);
     allSources.value = [];
@@ -78,6 +80,7 @@ function setSize(next: number): void {
 }
 
 watch([sourceType, enabledFilter], reload);
+watch(sourceQuery, () => (page.value = 1));
 
 type SortKey =
   | "id"
@@ -119,10 +122,10 @@ function toggleSort(key: SortKey): void {
 }
 
 const sortedItems = computed(() => {
-  if (sortKey.value === null) return allSources.value;
+  if (sortKey.value === null) return filteredSources.value;
   const accessor = sortAccessors[sortKey.value];
   const direction = sortOrder.value === "asc" ? 1 : -1;
-  return [...allSources.value].sort((left, right) => {
+  return [...filteredSources.value].sort((left, right) => {
     const a = accessor(left);
     const b = accessor(right);
     return a < b ? -direction : a > b ? direction : 0;
@@ -415,21 +418,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="page">
+  <section class="page">
     <n-space align="center" justify="space-between" class="head" :wrap="true">
       <n-space align="center" :size="8">
-        <n-icon size="22" color="#2b7fff"><CloudUploadOutline /></n-icon>
+        <n-icon size="22" color="var(--accent)"><CloudUploadOutline /></n-icon>
         <n-h2 class="title">采集源</n-h2>
       </n-space>
       <n-space>
-        <n-tooltip>
-          <template #trigger>
-            <n-button circle size="small" :aria-label="dark ? '切换到浅色主题' : '切换到深色主题'" @click="$emit('toggleTheme')">
-              <template #icon><n-icon><SunnyOutline v-if="dark" /><MoonOutline v-else /></n-icon></template>
-            </n-button>
-          </template>
-          {{ dark ? "浅色主题" : "深色主题" }}
-        </n-tooltip>
         <n-button size="small" :loading="loading" @click="refresh">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
@@ -441,8 +436,10 @@ onMounted(async () => {
       </n-space>
     </n-space>
 
-    <n-card size="small" class="mb">
-      <div class="filter-row">
+    <div class="filter-row mb">
+        <n-input v-model:value="sourceQuery" clearable placeholder="搜索采集地址" class="query-filter">
+          <template #prefix><n-icon><SearchOutline /></n-icon></template>
+        </n-input>
         <n-select
           v-model:value="sourceType"
           :options="sourceTypeOptions"
@@ -457,9 +454,8 @@ onMounted(async () => {
           placeholder="全部状态"
           class="status-filter"
         />
-        <n-text depth="3">共 {{ total }} 个</n-text>
-      </div>
-    </n-card>
+        <n-text depth="3">{{ total }} / {{ allSources.length }} 个</n-text>
+    </div>
 
     <n-alert v-if="error" type="error" class="mb">{{ error }}</n-alert>
 
@@ -500,9 +496,9 @@ onMounted(async () => {
     </div>
 
     <n-spin :show="loading" class="table-scroll">
-      <n-empty v-if="!loading && allSources.length === 0" description="还没有采集源" class="empty">
+      <n-empty v-if="!loading && total === 0" :description="allSources.length ? '没有匹配的采集源' : '还没有采集源'" class="empty">
         <template #extra>
-          <n-button size="small" @click="showCreate = true">登记第一个</n-button>
+          <n-button v-if="!allSources.length" size="small" @click="showCreate = true">登记第一个</n-button>
         </template>
       </n-empty>
 
@@ -611,6 +607,43 @@ onMounted(async () => {
           </tr>
         </tbody>
       </n-table>
+
+      <div v-if="!loading && pagedItems.length" class="mobile-source-list">
+        <n-checkbox :checked="allSelected" :indeterminate="partlySelected" @update:checked="toggleAll">选择当前页</n-checkbox>
+        <article v-for="source in pagedItems" :key="source.id" class="mobile-source">
+          <div class="mobile-source__head">
+            <n-checkbox
+              :checked="selectedIds.includes(source.id)"
+              :aria-label="`选择 ${sourceLabel(source)}`"
+              @update:checked="(checked: boolean) => toggleSelected(source.id, checked)"
+            />
+            <span class="mobile-source__name">{{ sourceLabel(source) }}</span>
+            <n-tag size="small" :bordered="false">{{ SOURCE_TYPE_LABEL[source.source_type] }}</n-tag>
+          </div>
+          <a class="mobile-source__url" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.url }}</a>
+          <div class="mobile-source__meta">
+            <span>{{ source.source_count < 0 ? "待采集" : `${source.source_count.toLocaleString()} 条规则` }}</span>
+            <span>{{ fromNow(source.last_queried_at) }}</span>
+            <n-tag v-if="source.last_error" size="small" type="error">失败 {{ source.consecutive_failures }} 次</n-tag>
+          </div>
+          <div class="mobile-source__actions">
+            <n-switch
+              size="small"
+              :value="source.enabled"
+              :loading="hasPending(source, 'enable') || hasPending(source, 'disable')"
+              :aria-label="`${source.enabled ? '停用' : '启用'} ${sourceLabel(source)}`"
+              @update:value="(enabled: boolean) => queueToggle(source, enabled)"
+            />
+            <span class="mobile-source__spacer" />
+            <n-button size="small" :loading="hasPending(source, 'collect')" @click="queueCollect(source)">采集</n-button>
+            <n-dropdown trigger="click" :options="rowMenuOptions" @select="(key: string) => onRowMenuSelect(key, source)">
+              <n-button size="small" quaternary circle :aria-label="`${sourceLabel(source)} 更多操作`">
+                <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
+              </n-button>
+            </n-dropdown>
+          </div>
+        </article>
+      </div>
     </n-spin>
 
     <n-pagination
@@ -644,14 +677,12 @@ onMounted(async () => {
         </n-space>
       </template>
     </n-modal>
-  </main>
+  </section>
 </template>
 
 <style scoped>
 .page {
-  width: min(calc(100% - 32px), 1440px);
-  margin: 0 auto;
-  padding: 28px 0 48px;
+  width: 100%;
 }
 
 .head,
@@ -672,10 +703,18 @@ onMounted(async () => {
 }
 
 .filter-row {
-  display: grid;
-  grid-template-columns: 150px 130px auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.query-filter {
+  flex: 1 1 230px;
+  max-width: 420px;
 }
 
 .operation-bar {
@@ -687,7 +726,8 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   border: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
-  border-radius: 4px;
+  border-radius: 6px;
+  background: var(--accent-soft);
 }
 
 .queue-status {
@@ -709,7 +749,7 @@ onMounted(async () => {
 }
 
 .source-table :deep(tbody tr.row-selected) {
-  background: color-mix(in srgb, #6d5ef8 8%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 .select-cell {
@@ -748,7 +788,7 @@ onMounted(async () => {
 }
 
 .sortable:hover {
-  color: var(--n-primary-color, #6d5ef8);
+  color: var(--accent);
 }
 
 .sort-arrow {
@@ -777,6 +817,33 @@ onMounted(async () => {
   display: block;
   margin-top: 8px;
   font-size: 12px;
+}
+
+.mobile-source-list { display: none; }
+
+@media (max-width: 700px) {
+  .source-table { display: none; }
+  .mobile-source-list { display: grid; gap: 10px; }
+  .mobile-source {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+  .mobile-source__head, .mobile-source__meta, .mobile-source__actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .mobile-source__name { min-width: 0; flex: 1; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-source__url { overflow-wrap: anywhere; color: var(--accent-secondary); font-size: 13px; line-height: 1.45; }
+  .mobile-source__meta { flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+  .mobile-source__actions { padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+  .mobile-source__spacer { flex: 1; }
+  .type-filter, .status-filter { flex: 1 1 calc(50% - 6px); width: auto; }
+  .query-filter { flex-basis: 100%; max-width: none; }
 }
 
 @media (pointer: coarse) {
