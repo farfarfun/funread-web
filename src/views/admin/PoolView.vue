@@ -15,6 +15,7 @@ import { RefreshOutline, SearchOutline } from "@vicons/ionicons5";
 import type { DataTableColumns } from "naive-ui";
 import { NButton, NSpace, NSwitch, NTag, useMessage } from "naive-ui";
 import { computed, h, onMounted, onUnmounted, ref } from "vue";
+import { useRoute } from "vue-router";
 
 import { api } from "../../api/client";
 import type { PoolPage, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
@@ -24,12 +25,16 @@ defineProps<{ dark: boolean }>();
 defineEmits<{ toggleTheme: [] }>();
 
 const message = useMessage();
+const route = useRoute();
 
 const page = ref<PoolPage | null>(null);
 const loading = ref(false);
+const scanning = ref(false);
+const bulkBusy = ref(false);
 const error = ref("");
+const selectedIds = ref<number[]>([]);
 
-const sourceType = ref<SourceType>("book");
+const sourceType = ref<SourceType>(route.query.source_type === "rss" ? "rss" : "book");
 const state = ref("any");
 const keyword = ref("");
 const pageNo = ref(1);
@@ -62,13 +67,18 @@ const testLimit = ref(50);
 const untestedOnly = ref(false);
 let testTimer: number | undefined;
 
-async function startTest() {
+async function startTest(urlIds?: number[]) {
   if (testing.value) return;
+  if (urlIds && urlIds.length > 500) {
+    message.warning("单次最多测试 500 个源，请缩小选择范围");
+    return;
+  }
   try {
     const accepted = await api.testSources({
       source_type: sourceType.value,
       limit: testLimit.value,
       untested_only: untestedOnly.value,
+      ...(urlIds ? { url_ids: urlIds } : {}),
     });
     message.success(`已排入 ${accepted.queued} 个源`);
     testing.value = {
@@ -144,8 +154,49 @@ async function load() {
 }
 
 function reload() {
+  selectedIds.value = [];
   pageNo.value = 1;
   return load();
+}
+
+function setSelection(keys: Array<string | number>) {
+  selectedIds.value = keys.map(Number);
+}
+
+async function scanArchive() {
+  if (scanning.value) return;
+  scanning.value = true;
+  try {
+    const result = await api.scan(sourceType.value);
+    if (sourceType.value === "book" && result.has_explore === 0) {
+      message.warning(`扫描了 ${result.scanned} 个书源，仍没有可浏览分类的源`);
+    } else {
+      message.success(`扫描 ${result.scanned} 个${sourceType.value === "book" ? "书源" : "订阅源"}，启用 ${result.enabled} 个`);
+    }
+    await reload();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "扫描失败");
+  } finally {
+    scanning.value = false;
+  }
+}
+
+async function setSelectedEnabled(enabled: boolean) {
+  if (bulkBusy.value || !selectedIds.value.length) return;
+  bulkBusy.value = true;
+  const failed: number[] = [];
+  for (const urlId of selectedIds.value) {
+    try {
+      await api.patchPoolSource(sourceType.value, urlId, { enabled });
+    } catch {
+      failed.push(urlId);
+    }
+  }
+  selectedIds.value = failed;
+  await load();
+  bulkBusy.value = false;
+  if (failed.length) message.error(`${failed.length} 个源操作失败，请重试`);
+  else message.success(`已${enabled ? "启用" : "停用"}所选源`);
 }
 
 async function patch(row: PoolSource, payload: Record<string, unknown>) {
@@ -160,6 +211,7 @@ async function patch(row: PoolSource, payload: Record<string, unknown>) {
 }
 
 const columns = computed<DataTableColumns<PoolSource>>(() => [
+  { type: "selection", multiple: true },
   { title: "url_id", key: "url_id", width: 100 },
   {
     title: "名称",
@@ -266,9 +318,14 @@ onMounted(load);
           那一页管的是产出源列表的 URL。
         </p>
       </div>
-      <n-button quaternary circle aria-label="刷新" :loading="loading" @click="load">
-        <template #icon><n-icon><RefreshOutline /></n-icon></template>
-      </n-button>
+      <n-space>
+        <n-button :loading="scanning" :disabled="Boolean(testing) || bulkBusy" @click="scanArchive">
+          扫描{{ sourceType === "book" ? "书源" : "订阅源" }}
+        </n-button>
+        <n-button quaternary circle aria-label="刷新" :loading="loading" @click="load">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+        </n-button>
+      </n-space>
     </header>
 
     <section v-if="summary" class="summary">
@@ -305,7 +362,7 @@ onMounted(load);
     </p>
 
     <div class="filters">
-      <n-select v-model:value="sourceType" :options="TYPE_OPTIONS" class="filters__type" @update:value="reload" />
+      <n-select v-model:value="sourceType" :options="TYPE_OPTIONS" class="filters__type" :disabled="scanning || bulkBusy || Boolean(testing)" @update:value="reload" />
       <n-select v-model:value="state" :options="STATE_OPTIONS" class="filters__state" @update:value="reload" />
       <n-input v-model:value="keyword" placeholder="搜源名" clearable @keyup.enter="reload" @clear="reload">
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
@@ -315,11 +372,17 @@ onMounted(load);
 
     <div class="testbar">
       <div class="testbar__main">
+        <span v-if="selectedIds.length">已选 {{ selectedIds.length }} 个</span>
+        <n-button v-if="selectedIds.length" size="small" quaternary @click="selectedIds = []">清空选择</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="setSelectedEnabled(true)">批量启用</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="setSelectedEnabled(false)">批量停用</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="startTest(selectedIds)">测试已选</n-button>
         <n-button
           type="primary"
           secondary
           :loading="Boolean(testing)"
-          @click="startTest"
+          :disabled="bulkBusy || scanning"
+          @click="startTest()"
         >
           批量测试
         </n-button>
@@ -365,7 +428,9 @@ onMounted(load);
         :columns="columns"
         :data="page?.items ?? []"
         :loading="loading"
-        :row-key="(row: PoolSource) => `${row.source_type}-${row.url_id}`"
+        :row-key="(row: PoolSource) => row.url_id"
+        :checked-row-keys="selectedIds"
+        @update:checked-row-keys="setSelection"
         size="small"
         :bordered="false"
       />

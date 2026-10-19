@@ -233,7 +233,7 @@ export const api = {
   ) => request<PoolSource>(`/pool/${source_type}/${url_id}`, { method: "PATCH", ...json(payload) }),
 
   //  批量测试。202 立刻返回，进度轮询 testProgress。
-  testSources: (payload: { source_type?: SourceType; limit?: number; untested_only?: boolean }) =>
+  testSources: (payload: { source_type?: SourceType; limit?: number; untested_only?: boolean; url_ids?: number[] }) =>
     request<SourceTestAccepted>("/pool/test", { method: "POST", ...json(payload) }),
   testProgress: (task_id: string) => request<SourceTestProgress>(`/pool/test/${task_id}`),
   resetScores: (source_type: SourceType, url_id?: number) =>

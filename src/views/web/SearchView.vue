@@ -20,6 +20,7 @@ import type { SearchBook, SearchPage } from "../../api/types";
 import BookCard from "../../components/web/BookCard.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useAuth } from "../../composables/useAuth";
 import { useSearchHistory } from "../../composables/useSearchHistory";
 import { useShortcuts } from "../../composables/useShortcuts";
 
@@ -27,6 +28,7 @@ const PAGE_SIZE = 20;
 
 const router = useRouter();
 const message = useMessage();
+const { isAdmin } = useAuth();
 const { history, remember, forget, clear } = useSearchHistory();
 
 const keyword = ref("");
@@ -179,10 +181,8 @@ function open(book: SearchBook) {
 
       <n-empty v-if="!items.length && needsScan" description="候选源池还是空的" class="state">
         <template #extra>
-          <p class="hint">
-            第一次使用需要先扫描本地源归档。在管理端执行一次
-            <code>POST /api/v1/reader/scan</code>，或让管理员跑一次扫描。
-          </p>
+          <n-button v-if="isAdmin" @click="router.push({ name: 'admin-pool' })">前往候选源池</n-button>
+          <p v-else class="hint">请管理员在候选源池扫描书源。</p>
         </template>
       </n-empty>
 

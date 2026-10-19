@@ -9,15 +9,19 @@
 import { SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
 import type { RssSource } from "../../api/types";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useAuth } from "../../composables/useAuth";
 
 const PAGE_SIZE = 30;
 
 const message = useMessage();
+const router = useRouter();
+const { isAdmin } = useAuth();
 
 const items = ref<RssSource[]>([]);
 const total = ref(0);
@@ -114,10 +118,8 @@ onMounted(() => {
 
     <n-empty v-else-if="!items.length" description="候选源池还是空的" class="state">
       <template #extra>
-        <p class="hint">
-          第一次使用需要先扫描本地源归档：在管理端执行一次
-          <code>POST /api/v1/reader/scan?source_type=rss</code>。
-        </p>
+        <n-button v-if="isAdmin" @click="router.push({ name: 'admin-pool', query: { source_type: 'rss' } })">前往候选源池</n-button>
+        <p v-else class="hint">请管理员在候选源池扫描订阅源。</p>
       </template>
     </n-empty>
 

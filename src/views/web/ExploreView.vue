@@ -19,11 +19,13 @@ import type { ExploreKind, ExploreSource, SearchBook } from "../../api/types";
 import BookCard from "../../components/web/BookCard.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
+import { useAuth } from "../../composables/useAuth";
 
 const PAGE_SIZE = 30;
 
 const router = useRouter();
 const message = useMessage();
+const { isAdmin } = useAuth();
 
 /** 三层导航用一个 step 表示，不开三个路由 —— 返回体验更像原生抽屉。 */
 const step = ref<"sources" | "kinds" | "books">("sources");
@@ -196,10 +198,8 @@ onMounted(() => loadSources());
 
       <n-empty v-if="!sources.length" description="没有可浏览分类的源" class="state">
         <template #extra>
-          <p class="hint">
-            发现页需要源自带分类规则（<code>exploreUrl</code>）。如果这里是空的，
-            先在管理端跑一次 <code>POST /api/v1/reader/scan</code>。
-          </p>
+          <n-button v-if="isAdmin" @click="router.push({ name: 'admin-pool' })">前往候选源池</n-button>
+          <p v-else class="hint">请管理员在候选源池扫描书源。</p>
         </template>
       </n-empty>
 
