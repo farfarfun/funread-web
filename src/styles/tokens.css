@@ -38,7 +38,6 @@ body {
   min-width: 320px;
   background: var(--bg-canvas);
   letter-spacing: 0;
-  transition: background 0.2s var(--ease);
 }
 
 #app {

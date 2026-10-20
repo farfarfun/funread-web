@@ -32,7 +32,7 @@ import { useAuth } from "../../composables/useAuth";
 import { useShortcuts } from "../../composables/useShortcuts";
 
 type ViewMode = "grid" | "list";
-type SortKey = "recent" | "added" | "name";
+type SortKey = "recent" | "name";
 
 const VIEW_KEY = "funread.shelf.view";
 const SORT_KEY = "funread.shelf.sort";
@@ -57,7 +57,7 @@ const groups = ref<ShelfGroup[]>([]);
 const loading = ref(true);
 const error = ref("");
 const mode = ref<ViewMode>((localStorage.getItem(VIEW_KEY) as ViewMode) || "grid");
-const sort = ref<SortKey>((localStorage.getItem(SORT_KEY) as SortKey) || "recent");
+const sort = ref<SortKey>(localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent");
 
 //  `null` = 全部，`""` = 未分组，其余 = 组名。三态，所以不能用空串兼表「全部」。
 const activeGroup = ref<string | null>(readActiveGroup());
@@ -75,7 +75,6 @@ let pollTimer: number | undefined;
 
 const SORT_OPTIONS = [
   { label: "最近阅读", value: "recent" },
-  { label: "加入时间", value: "added" },
   { label: "书名", value: "name" },
 ];
 
@@ -94,9 +93,7 @@ function readActiveGroup(): string | null {
 const sorted = computed(() => {
   const list = [...books.value];
   if (sort.value === "name") return list.sort((a, b) => a.name.localeCompare(b.name, "zh"));
-  //  后端已按 updated_at 倒序给了，「最近阅读」就是原序；「加入时间」没有单独
-  //  的字段，用 book_key 稳定排一下，至少是确定的顺序而不是随机的。
-  if (sort.value === "added") return list.sort((a, b) => a.book_key.localeCompare(b.book_key));
+  //  后端已按 updated_at 倒序给了，「最近阅读」就是原序。
   return list;
 });
 

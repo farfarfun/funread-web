@@ -111,7 +111,7 @@ const mediaKind = computed<"audio" | "video" | "">(() => {
   display: -webkit-box;
   margin: 0 0 4px;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--text-muted);
   -webkit-box-orient: vertical;

@@ -2,7 +2,7 @@
 /** 一个订阅下的文章列表：分类切换、下拉刷新、加载更多、已读/收藏。 */
 import { CheckmarkDoneOutline, RefreshOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -28,33 +28,43 @@ const hasContent = ref(true);
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref("");
+let requestVersion = 0;
 
 const unread = computed(() => articles.value.filter((item) => !item.read).length);
 
 async function bootstrap() {
+  const version = ++requestVersion;
   loading.value = true;
   error.value = "";
+  subscription.value = null;
+  categories.value = [];
+  articles.value = [];
+  nextUrl.value = "";
   try {
     const all = await api.subscriptions();
+    if (version !== requestVersion) return;
     subscription.value = all.find((item) => item.sub_id === subId.value) ?? null;
     if (!subscription.value) {
       error.value = "没有这个订阅";
       return;
     }
     categories.value = await api.rssCategories(subId.value).catch(() => []);
+    if (version !== requestVersion) return;
     category.value = categories.value[0]?.name ?? "";
-    await fetchPage(true);
+    await fetchPage(true, version);
   } catch (reason) {
+    if (version !== requestVersion) return;
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
-    loading.value = false;
+    if (version === requestVersion) loading.value = false;
   }
 }
 
-async function fetchPage(reset: boolean) {
+async function fetchPage(reset: boolean, version: number) {
   if (reset) {
     articles.value = [];
     nextUrl.value = "";
+    loadingMore.value = false;
   }
   try {
     const page = await api.rssArticles({
@@ -63,6 +73,7 @@ async function fetchPage(reset: boolean) {
       next_url: reset ? "" : nextUrl.value,
       limit: 30,
     });
+    if (version !== requestVersion) return;
     //  按 article_key 去重：翻页时源站很可能把第一页的条目又给一遍
     const seen = new Set(articles.value.map((item) => item.article_key));
     const fresh = page.items.filter((item) => !seen.has(item.article_key));
@@ -70,31 +81,35 @@ async function fetchPage(reset: boolean) {
     nextUrl.value = page.next_url;
     hasContent.value = page.has_content;
   } catch (reason) {
+    if (version !== requestVersion) return;
     if (reset) error.value = reason instanceof Error ? reason.message : "加载失败";
     else message.error(reason instanceof Error ? reason.message : "加载更多失败");
   }
 }
 
 async function switchCategory(name: string) {
+  const version = ++requestVersion;
   category.value = name;
   loading.value = true;
   error.value = "";
-  await fetchPage(true);
-  loading.value = false;
+  await fetchPage(true, version);
+  if (version === requestVersion) loading.value = false;
 }
 
 async function refresh() {
+  const version = ++requestVersion;
   loading.value = true;
   error.value = "";
-  await fetchPage(true);
-  loading.value = false;
+  await fetchPage(true, version);
+  if (version === requestVersion) loading.value = false;
 }
 
 async function more() {
   if (!nextUrl.value || loadingMore.value) return;
+  const version = requestVersion;
   loadingMore.value = true;
-  await fetchPage(false);
-  loadingMore.value = false;
+  await fetchPage(false, version);
+  if (version === requestVersion) loadingMore.value = false;
 }
 
 function open(article: RssArticle) {
@@ -157,7 +172,10 @@ async function readAll() {
   }
   try {
     const result = await api.readAll(subId.value, keys);
-    articles.value.forEach((item) => (item.read = true));
+    const readKeys = new Set(keys);
+    articles.value.forEach((item) => {
+      if (readKeys.has(item.article_key)) item.read = true;
+    });
     message.success(`已标记 ${result.changed} 篇为已读`);
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "操作失败");
@@ -170,7 +188,7 @@ useShortcuts({
   Escape: () => router.push({ name: "rss" }),
 });
 
-onMounted(bootstrap);
+watch(subId, bootstrap, { immediate: true });
 </script>
 
 <template>

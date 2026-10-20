@@ -469,6 +469,7 @@ export interface RssArticleDetail {
   media_url: string;
   media_type: string;
   content_html: string;
+  favorited: boolean;
 }
 
 export interface RssHistoryItem {

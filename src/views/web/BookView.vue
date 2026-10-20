@@ -617,6 +617,13 @@ onMounted(loadInfo);
   backdrop-filter: blur(12px);
 }
 
+@media (max-width: 899px) {
+  .dock {
+    bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--space-2);
+  }
+}
+
 .dock__side {
   flex-shrink: 0;
 }

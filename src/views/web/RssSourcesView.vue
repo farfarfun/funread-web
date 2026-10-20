@@ -20,10 +20,12 @@ const { isAdmin } = useAuth();
 const items = ref<RssSource[]>([]);
 const total = ref(0);
 const keyword = ref("");
+const activeKeyword = ref("");
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref("");
 const subscribing = ref<number | null>(null);
+let loadVersion = 0;
 /**
  * 已订阅的 `url_id`。**进页面时就要拉一次** —— 只记本次点击的话，翻回这一页时
  * 已订阅的源又会显示成可订阅，点下去撞一个「已经订阅过」的错误。
@@ -31,6 +33,9 @@ const subscribing = ref<number | null>(null);
 const subscribed = ref<Set<number>>(new Set());
 
 async function load(reset = true) {
+  if (!reset && loadingMore.value) return;
+  if (reset) activeKeyword.value = keyword.value.trim();
+  const version = reset ? ++loadVersion : loadVersion;
   if (reset) {
     loading.value = true;
     items.value = [];
@@ -40,17 +45,21 @@ async function load(reset = true) {
   error.value = "";
   try {
     const page = await api.rssSources({
-      q: keyword.value.trim(),
+      q: activeKeyword.value,
       limit: PAGE_SIZE,
       offset: reset ? 0 : items.value.length,
     });
+    if (version !== loadVersion) return;
     items.value = reset ? page.items : [...items.value, ...page.items];
     total.value = page.total;
   } catch (reason) {
+    if (version !== loadVersion) return;
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (version === loadVersion) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -108,7 +117,7 @@ onMounted(() => {
       <template #footer><n-button @click="load()">重试</n-button></template>
     </n-result>
 
-    <n-empty v-else-if="!items.length && keyword" description="没有匹配的源" class="state" />
+    <n-empty v-else-if="!items.length && activeKeyword" description="没有匹配的源" class="state" />
 
     <n-empty v-else-if="!items.length" description="候选源池还是空的" class="state">
       <template #extra>

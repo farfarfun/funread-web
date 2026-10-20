@@ -6,13 +6,17 @@ import { ChevronBackOutline } from "@vicons/ionicons5";
 import { useRouter } from "vue-router";
 
 const props = withDefaults(
-  defineProps<{ title: string; back?: boolean; fallback?: string }>(),
-  { back: false, fallback: "/web" },
+  defineProps<{ title: string; back?: boolean; fallback?: string; backAction?: () => void; backLabel?: string }>(),
+  { back: false, fallback: "/web", backLabel: "返回" },
 );
 
 const router = useRouter();
 
 function goBack() {
+  if (props.backAction) {
+    props.backAction();
+    return;
+  }
   //  history 里没有上一页时（直接粘链接进来、或刚从登录页跳过来）回 fallback，
   //  而不是 router.back() 把人弹出这个应用。
   if (window.history.state?.back) router.back();
@@ -22,7 +26,7 @@ function goBack() {
 
 <template>
   <header class="top-bar">
-    <button v-if="back" class="top-bar__back" type="button" aria-label="返回" @click="goBack">
+    <button v-if="back" class="top-bar__back" type="button" :aria-label="backLabel" :title="backLabel" @click="goBack">
       <n-icon size="22"><ChevronBackOutline /></n-icon>
     </button>
     <h1 class="top-bar__title">{{ title }}</h1>

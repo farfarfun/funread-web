@@ -175,7 +175,11 @@ function reload() {
 }
 
 function setSelection(keys: Array<string | number>) {
-  selectedIds.value = keys.map(Number);
+  const visible = new Set(page.value?.items.map((item) => item.url_id) ?? []);
+  selectedIds.value = [
+    ...selectedIds.value.filter((id) => !visible.has(id)),
+    ...keys.map(Number).filter((id) => visible.has(id)),
+  ];
 }
 
 async function scanSources() {

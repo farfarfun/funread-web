@@ -33,6 +33,7 @@ const step = ref<"sources" | "kinds" | "books">("sources");
 const sources = ref<ExploreSource[]>([]);
 const sourcesTotal = ref(0);
 const keyword = ref("");
+const activeQuery = ref("");
 
 const source = ref<ExploreSource | null>(null);
 const kinds = ref<ExploreKind[]>([]);
@@ -45,6 +46,7 @@ const hasMore = ref(false);
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref("");
+let requestVersion = 0;
 
 const title = computed(() => {
   if (step.value === "books" && kind.value) return `${source.value?.name} · ${kind.value.name}`;
@@ -53,7 +55,9 @@ const title = computed(() => {
 });
 
 async function loadSources(reset = true) {
+  const version = ++requestVersion;
   if (reset) {
+    activeQuery.value = keyword.value.trim();
     loading.value = true;
     sources.value = [];
   } else {
@@ -62,35 +66,46 @@ async function loadSources(reset = true) {
   error.value = "";
   try {
     const result = await api.exploreSources({
-      q: keyword.value.trim(),
+      q: activeQuery.value,
       limit: PAGE_SIZE,
       offset: reset ? 0 : sources.value.length,
     });
+    if (version !== requestVersion) return;
     sources.value = reset ? result.items : [...sources.value, ...result.items];
     sourcesTotal.value = result.total;
   } catch (reason) {
+    if (version !== requestVersion) return;
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (version === requestVersion) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
 async function openSource(item: ExploreSource) {
+  const version = ++requestVersion;
   source.value = item;
   step.value = "kinds";
+  kinds.value = [];
+  kind.value = null;
   loading.value = true;
   error.value = "";
   try {
-    kinds.value = await api.exploreKinds(item.url_id);
+    const result = await api.exploreKinds(item.url_id);
+    if (version !== requestVersion) return;
+    kinds.value = result;
   } catch (reason) {
+    if (version !== requestVersion) return;
     error.value = reason instanceof Error ? reason.message : "分类加载失败";
   } finally {
-    loading.value = false;
+    if (version === requestVersion) loading.value = false;
   }
 }
 
 async function openKind(item: ExploreKind, nextPage = 1) {
+  const version = ++requestVersion;
   kind.value = item;
   step.value = "books";
   if (nextPage === 1) {
@@ -106,6 +121,7 @@ async function openKind(item: ExploreKind, nextPage = 1) {
       url: item.url,
       page: nextPage,
     });
+    if (version !== requestVersion) return;
     //  按 book_key 去重：源站翻页经常把上一页的条目又给一遍
     const seen = new Set(books.value.map((book) => book.book_key));
     const fresh = result.items.filter((book) => !seen.has(book.book_key));
@@ -115,15 +131,22 @@ async function openKind(item: ExploreKind, nextPage = 1) {
     //  拿到空页就说明到底了。
     hasMore.value = result.items.length > 0;
   } catch (reason) {
+    if (version !== requestVersion) return;
     if (nextPage === 1) error.value = reason instanceof Error ? reason.message : "加载失败";
     else message.error(reason instanceof Error ? reason.message : "加载更多失败");
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (version === requestVersion) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
 function back() {
+  requestVersion += 1;
+  loading.value = false;
+  loadingMore.value = false;
+  error.value = "";
   if (step.value === "books") {
     step.value = "kinds";
     books.value = [];
@@ -155,20 +178,13 @@ onMounted(() => loadSources());
 
 <template>
   <div>
-    <TopBar :title="title" :back="step !== 'sources'" fallback="/web/explore">
+    <TopBar :title="title" :back="step !== 'sources'" :back-action="back" :back-label="step === 'books' ? '返回分类' : '返回源列表'">
       <template #actions>
         <n-button quaternary circle aria-label="搜索" @click="router.push({ name: 'search' })">
           <template #icon><n-icon><SearchOutline /></n-icon></template>
         </n-button>
       </template>
     </TopBar>
-
-    <!-- 自己的返回按钮：三层在一个路由里，TopBar 的 history 返回会直接离开本页 -->
-    <div v-if="step !== 'sources'" class="crumb">
-      <n-button text size="small" @click="back">
-        ‹ {{ step === "books" ? "回到分类" : "回到源列表" }}
-      </n-button>
-    </div>
 
     <SkeletonList v-if="loading" :rows="5" :cover="step === 'books'" />
 
@@ -187,13 +203,14 @@ onMounted(() => loadSources());
         <n-input
           v-model:value="keyword"
           placeholder="搜源名"
+          :input-props="{ 'aria-label': '源名称' }"
           clearable
           @keyup.enter="loadSources()"
           @clear="loadSources()"
         >
           <template #prefix><n-icon><SearchOutline /></n-icon></template>
         </n-input>
-        <n-button type="primary" @click="loadSources()">搜索</n-button>
+        <n-button type="primary" :loading="loading" @click="loadSources()">搜索</n-button>
       </div>
 
       <n-empty v-if="!sources.length" description="没有可浏览分类的源" class="state">
@@ -205,20 +222,18 @@ onMounted(() => loadSources());
 
       <template v-else>
         <p class="stats">{{ sourcesTotal }} 个源可以按分类浏览</p>
-        <n-list hoverable clickable>
-          <n-list-item v-for="item in sources" :key="item.url_id" @click="openSource(item)">
-            <div class="row">
-              <div class="row__body">
-                <p class="row__name">{{ item.name }}</p>
-                <p v-if="item.kinds.length" class="row__kinds">
+        <div class="source-list">
+          <button v-for="item in sources" :key="item.url_id" type="button" class="source-row" @click="openSource(item)">
+            <span class="row__body">
+              <span class="row__name">{{ item.name }}</span>
+              <span v-if="item.kinds.length" class="row__kinds">
                   {{ item.kinds.slice(0, 6).join(" · ")
                   }}{{ item.kinds.length > 6 ? ` …共 ${item.kinds.length} 个` : "" }}
-                </p>
-              </div>
-              <n-icon class="row__arrow" size="16"><ChevronForwardOutline /></n-icon>
-            </div>
-          </n-list-item>
-        </n-list>
+              </span>
+            </span>
+            <n-icon class="row__arrow" size="16"><ChevronForwardOutline /></n-icon>
+          </button>
+        </div>
         <div v-if="sources.length < sourcesTotal" class="more">
           <n-button :loading="loadingMore" block @click="loadSources(false)">加载更多</n-button>
         </div>
@@ -229,14 +244,15 @@ onMounted(() => loadSources());
     <template v-else-if="step === 'kinds'">
       <n-empty v-if="!kinds.length" description="这个源没有可浏览的分类" class="state" />
       <div v-else class="kinds">
-        <n-button
+        <button
           v-for="item in kinds"
           :key="item.url"
+          type="button"
           class="kinds__item"
           @click="openKind(item)"
         >
-          {{ item.name }}
-        </n-button>
+          <span>{{ item.name }}</span><n-icon size="16"><ChevronForwardOutline /></n-icon>
+        </button>
       </div>
     </template>
 
@@ -247,7 +263,7 @@ onMounted(() => loadSources());
       </n-empty>
       <template v-else>
         <n-list hoverable clickable>
-          <n-list-item v-for="book in books" :key="book.book_key" @click="open(book)">
+          <n-list-item v-for="book in books" :key="book.book_key" role="button" tabindex="0" @click="open(book)" @keyup.enter="open(book)" @keyup.space.prevent="open(book)">
             <BookCard
               :name="book.name"
               :author="book.author"
@@ -258,9 +274,7 @@ onMounted(() => loadSources());
           </n-list-item>
         </n-list>
         <div v-if="hasMore" class="more">
-          <n-button :loading="loadingMore" block @click="openKind(kind!, page + 1)">
-            第 {{ page + 1 }} 页
-          </n-button>
+          <n-button :loading="loadingMore" block @click="openKind(kind!, page + 1)">加载更多</n-button>
         </div>
         <p v-else class="end">没有更多了</p>
       </template>
@@ -269,15 +283,13 @@ onMounted(() => loadSources());
 </template>
 
 <style scoped>
-.crumb {
-  padding: var(--space-2) var(--space-3) 0;
-}
-
 .search {
   display: flex;
   gap: var(--space-2);
   padding: var(--space-3);
 }
+
+.search .n-input { min-width: 0; }
 
 .state {
   padding: var(--space-6) var(--space-4);
@@ -298,31 +310,47 @@ onMounted(() => loadSources());
   color: var(--text-muted);
 }
 
-.row {
+.source-list {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.source-row {
   display: flex;
-  flex: 1;
-  gap: var(--space-2);
+  width: 100%;
+  min-height: 72px;
+  gap: var(--space-3);
   align-items: center;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+  text-align: left;
+  background: var(--surface-raised);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.18s var(--ease);
+}
+
+.source-row:hover,
+.source-row:active {
+  background: var(--surface-sunken);
 }
 
 .row__body {
+  display: grid;
+  gap: 3px;
   min-width: 0;
   flex: 1;
 }
 
 .row__name {
-  margin: 0 0 2px;
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .row__kinds {
-  margin: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -335,14 +363,43 @@ onMounted(() => loadSources());
 
 .kinds {
   display: grid;
-  /* 分类名短，宽屏上自然排多列 */
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
   gap: var(--space-2);
   padding: var(--space-3);
 }
 
 .kinds__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   width: 100%;
+  min-height: 52px;
+  padding: var(--space-2) var(--space-3);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+
+.kinds__item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.kinds__item .n-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.kinds__item:hover,
+.kinds__item:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .more {

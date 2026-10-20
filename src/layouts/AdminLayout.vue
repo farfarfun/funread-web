@@ -46,6 +46,7 @@ const themeOverrides: GlobalThemeOverrides = {
     <n-dialog-provider>
       <n-message-provider>
         <div v-if="!$route.meta.bare" class="admin-frame">
+          <a class="admin-skip" href="#admin-content">跳转到内容</a>
           <aside class="admin-sidebar">
             <div class="admin-brand"><span class="admin-brand__mark">f</span><span>funread <small>管理</small></span></div>
             <nav class="admin-nav" aria-label="管理导航">
@@ -60,13 +61,13 @@ const themeOverrides: GlobalThemeOverrides = {
               </RouterLink>
             </nav>
             <div class="admin-sidebar__footer">
-              <RouterLink to="/web" class="admin-nav__item"><n-icon size="18"><BookOutline /></n-icon><span>阅读端</span></RouterLink>
-              <n-button quaternary circle :aria-label="dark ? '切换到浅色主题' : '切换到深色主题'" @click="toggle">
+              <RouterLink to="/web" class="admin-nav__item admin-reader-link" title="阅读端" aria-label="阅读端"><n-icon size="18"><BookOutline /></n-icon><span>阅读端</span></RouterLink>
+              <n-button quaternary circle :aria-label="dark ? '切换到浅色主题' : '切换到深色主题'" :title="dark ? '浅色主题' : '深色主题'" @click="toggle">
                 <template #icon><n-icon><SunnyOutline v-if="dark" /><MoonOutline v-else /></n-icon></template>
               </n-button>
             </div>
           </aside>
-          <div class="admin-content"><RouterView /></div>
+          <main id="admin-content" class="admin-content"><RouterView /></main>
         </div>
         <RouterView v-else />
       </n-message-provider>
@@ -80,6 +81,19 @@ const themeOverrides: GlobalThemeOverrides = {
   grid-template-columns: 220px minmax(0, 1fr);
   min-height: 100dvh;
 }
+
+.admin-skip {
+  position: fixed;
+  z-index: 100;
+  top: -60px;
+  left: 16px;
+  padding: 10px 14px;
+  color: #fff;
+  background: #167a69;
+  border-radius: 6px;
+}
+
+.admin-skip:focus { top: 8px; }
 
 .admin-sidebar {
   display: flex;
@@ -140,6 +154,8 @@ const themeOverrides: GlobalThemeOverrides = {
   background: var(--accent-soft);
 }
 
+.admin-nav__item:active { background: var(--surface-sunken); }
+
 .admin-sidebar__footer {
   display: flex;
   align-items: center;
@@ -166,8 +182,9 @@ const themeOverrides: GlobalThemeOverrides = {
   .admin-brand { padding: 0; }
   .admin-nav { display: flex; overflow-x: auto; }
   .admin-nav__item { flex: none; }
-  .admin-sidebar__footer { position: absolute; top: 8px; right: 12px; margin: 0; }
-  .admin-sidebar__footer .admin-nav__item { display: none; }
+  .admin-sidebar__footer { position: absolute; top: 8px; right: 12px; gap: 4px; margin: 0; }
+  .admin-reader-link { width: 40px; min-height: 40px; justify-content: center; padding: 0; }
+  .admin-reader-link span { display: none; }
   .admin-content { padding: 20px 16px 48px; }
 }
 </style>

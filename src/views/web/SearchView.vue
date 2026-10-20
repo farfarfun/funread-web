@@ -10,7 +10,7 @@
  *   九个需要 JS」在界面上一模一样；
  * - 空结果要分两种文案：真的没命中，和所有源都失败了。
  */
-import { CloseOutline, SearchOutline } from "@vicons/ionicons5";
+import { SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
@@ -32,6 +32,7 @@ const { isAdmin } = useAuth();
 const { history, remember, forget, clear } = useSearchHistory();
 
 const keyword = ref("");
+const activeKeyword = ref("");
 const input = ref<{ focus: () => void } | null>(null);
 const loading = ref(false);
 const loadingMore = ref(false);
@@ -57,10 +58,12 @@ async function run(term?: string) {
   const value = (term ?? keyword.value).trim();
   if (!value) return;
   keyword.value = value;
+  activeKeyword.value = value;
   loading.value = true;
   error.value = "";
   page.value = null;
   items.value = [];
+  loadingMore.value = false;
   const version = ++searchVersion;
   try {
     const result = await api.search({ keyword: value, limit: PAGE_SIZE, offset: 0 });
@@ -78,22 +81,26 @@ async function run(term?: string) {
 
 async function more() {
   if (!page.value || loadingMore.value) return;
+  const version = searchVersion;
+  const term = activeKeyword.value;
   loadingMore.value = true;
   try {
     const result = await api.search({
-      keyword: keyword.value,
+      keyword: term,
       limit: PAGE_SIZE,
       offset: items.value.length,
     });
+    if (version !== searchVersion) return;
     //  每次调用都重跑一轮实时 fan-out，所以第二页可能出现第一页已有的书。
     //  按 book_key 去重，否则列表里会冒出重复条目。
     const seen = new Set(items.value.map((item) => item.book_key));
     items.value = [...items.value, ...result.items.filter((item) => !seen.has(item.book_key))];
     page.value = result;
   } catch (reason) {
+    if (version !== searchVersion) return;
     message.error(reason instanceof Error ? reason.message : "加载更多失败");
   } finally {
-    loadingMore.value = false;
+    if (version === searchVersion) loadingMore.value = false;
   }
 }
 
@@ -104,9 +111,11 @@ useShortcuts({
   Escape: () => {
     searchVersion += 1;
     keyword.value = "";
+    activeKeyword.value = "";
     page.value = null;
     items.value = [];
     loading.value = false;
+    loadingMore.value = false;
   },
 });
 
@@ -138,12 +147,12 @@ function open(book: SearchBook) {
         placeholder="搜书名或作者"
         clearable
         size="large"
-        :input-props="{ enterkeyhint: 'search', autocapitalize: 'off', autocorrect: 'off' }"
+        :input-props="{ 'aria-label': '书名或作者', enterkeyhint: 'search', autocapitalize: 'off', autocorrect: 'off' }"
         @keyup.enter="run()"
       >
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
-      <n-button type="primary" size="large" :loading="loading" @click="run()">搜索</n-button>
+      <n-button type="primary" size="large" :loading="loading" :disabled="!keyword.trim()" @click="run()">搜索</n-button>
     </div>
 
     <section v-if="!page && !loading && history.length" class="history">
@@ -208,7 +217,7 @@ function open(book: SearchBook) {
       </n-empty>
 
       <n-list v-else hoverable clickable>
-        <n-list-item v-for="book in items" :key="book.book_key" @click="open(book)">
+        <n-list-item v-for="book in items" :key="book.book_key" role="button" tabindex="0" @click="open(book)" @keyup.enter="open(book)" @keyup.space.prevent="open(book)">
           <BookCard
             :name="book.name"
             :author="book.author"
@@ -237,6 +246,8 @@ function open(book: SearchBook) {
   gap: var(--space-2);
   padding: var(--space-3);
 }
+
+.search .n-input { min-width: 0; }
 
 .history {
   padding: 0 var(--space-3) var(--space-3);

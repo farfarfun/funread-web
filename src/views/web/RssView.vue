@@ -193,7 +193,11 @@ onActivated(load);
         <n-list-item
           v-for="subscription in subscriptions"
           :key="subscription.sub_id"
+          role="button"
+          tabindex="0"
           @click="router.push({ name: 'rss-feed', params: { subId: subscription.sub_id } })"
+          @keyup.enter.self="router.push({ name: 'rss-feed', params: { subId: subscription.sub_id } })"
+          @keyup.space.self.prevent="router.push({ name: 'rss-feed', params: { subId: subscription.sub_id } })"
         >
           <div class="sub">
             <img

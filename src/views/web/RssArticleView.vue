@@ -9,7 +9,7 @@
  */
 import { OpenOutline, SettingsOutline, StarOutline, Star } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -138,32 +138,40 @@ const loading = ref(true);
 const error = ref("");
 const favorited = ref(false);
 const showSettings = ref(false);
+let loadVersion = 0;
 
 const safeHtml = computed(() => sanitize(article.value?.content_html || ""));
 
 async function load() {
+  const version = ++loadVersion;
   loading.value = true;
   error.value = "";
+  article.value = null;
+  favorited.value = false;
   try {
-    article.value = await api.rssArticle({
+    const result = await api.rssArticle({
       sub_id: subId.value,
       link: link.value,
       title: String(route.query.title || ""),
       variables: variables.value,
     });
+    if (version !== loadVersion) return;
+    article.value = result;
+    favorited.value = result.favorited;
     //  打开即已读。这是订阅阅读的常规语义，不必再点一下。
     void api
-      .markRead(subId.value, article.value.article_key, true, {
-        title: article.value.title,
-        link: article.value.link,
-        pub_date: article.value.pub_date,
-        image: article.value.image,
+      .markRead(subId.value, result.article_key, true, {
+        title: result.title,
+        link: result.link,
+        pub_date: result.pub_date,
+        image: result.image,
       })
       .catch(() => undefined);
   } catch (reason) {
+    if (version !== loadVersion) return;
     error.value = reason instanceof Error ? reason.message : "正文加载失败";
   } finally {
-    loading.value = false;
+    if (version === loadVersion) loading.value = false;
   }
 }
 
@@ -196,7 +204,7 @@ useShortcuts({
   },
 });
 
-onMounted(load);
+watch(() => route.fullPath, load, { immediate: true });
 </script>
 
 <template>
