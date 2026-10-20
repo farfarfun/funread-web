@@ -11,14 +11,14 @@
  * 汇总里最该看的是 `proven`（实跑成功过的数量）—— 那才是池子的真实健康度。
  * `enabled` 只是静态判定的结果，而实测 150 个标着可用的源里只有 6 个真能跑通。
  */
-import { RefreshOutline, SearchOutline } from "@vicons/ionicons5";
-import type { DataTableColumns } from "naive-ui";
+import { CreateOutline, OptionsOutline, RefreshOutline, SearchOutline, SparklesOutline, TrashOutline } from "@vicons/ionicons5";
+import type { DataTableColumns, DataTableSortState } from "naive-ui";
 import { NButton, NSpace, NSwitch, NTag, useMessage } from "naive-ui";
 import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import { api } from "../../api/client";
-import type { PoolPage, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
+import type { PoolPage, PoolRules, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
 import { formatTime, fromNow } from "../../utils/display";
 
 const message = useMessage();
@@ -30,9 +30,78 @@ const scanning = ref(false);
 const bulkBusy = ref(false);
 const error = ref("");
 const selectedIds = ref<number[]>([]);
+const editing = ref<PoolRules | null>(null);
+const editorOpen = ref(false);
+const editorLoading = ref(false);
+const editorSaving = ref(false);
+const editorText = ref("");
+const editorError = ref("");
+const editorHint = ref("");
+const optimizingId = ref<number | null>(null);
+
+async function openEditor(row: PoolSource) {
+  editorOpen.value = true;
+  editorLoading.value = true;
+  editorError.value = "";
+  editorHint.value = "";
+  editing.value = null;
+  try {
+    editing.value = await api.poolRules(row.source_type, row.url_id);
+    editorText.value = JSON.stringify(editing.value.rules, null, 2);
+  } catch (reason) {
+    editorError.value = reason instanceof Error ? reason.message : "读取规则失败";
+  } finally {
+    editorLoading.value = false;
+  }
+}
+
+async function optimize(row: PoolSource) {
+  if (optimizingId.value !== null) return;
+  await openEditor(row);
+  if (!editing.value) return;
+  optimizingId.value = row.url_id;
+  try {
+    const result = await api.optimizePoolRss(row.url_id);
+    editorText.value = JSON.stringify(result.rules, null, 2);
+    editorHint.value = result.status === "ok"
+      ? `当前规则可用，解析到 ${result.before_count} 篇文章`
+      : `${result.reason} · 验证通过 ${result.after_count} 篇文章`;
+  } catch (reason) {
+    editorError.value = reason instanceof Error ? reason.message : "规则优化失败";
+  } finally {
+    optimizingId.value = null;
+  }
+}
+
+async function saveEditor() {
+  if (!editing.value || editorSaving.value) return;
+  let rules: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(editorText.value);
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("规则必须是 JSON 对象");
+    rules = parsed as Record<string, unknown>;
+  } catch (reason) {
+    editorError.value = reason instanceof Error ? reason.message : "JSON 格式错误";
+    return;
+  }
+  editorSaving.value = true;
+  editorError.value = "";
+  try {
+    const current = editing.value;
+    await api.savePoolRules(current.source.source_type, current.source.url_id, rules, current.updated_at);
+    editorOpen.value = false;
+    message.success("规则已保存");
+    await load();
+  } catch (reason) {
+    editorError.value = reason instanceof Error ? reason.message : "保存失败";
+  } finally {
+    editorSaving.value = false;
+  }
+}
 
 const sourceType = ref<SourceType>(route.query.source_type === "rss" ? "rss" : "book");
 const state = ref("any");
+const sort = ref("rank");
 const keyword = ref("");
 const pageNo = ref(1);
 const pageSize = ref(50);
@@ -42,7 +111,47 @@ const STATE_OPTIONS = [
   { label: "已启用", value: "enabled" },
   { label: "已停用", value: "disabled" },
   { label: "有失败记录", value: "failing" },
+  { label: "未测试", value: "untested" },
 ];
+
+const SORT_OPTIONS = [
+  { label: "默认排序", value: "rank" },
+  { label: "最近测试 · 新到旧", value: "last_test_desc" },
+  { label: "最近测试 · 旧到新", value: "last_test_asc" },
+];
+const sortOptions = computed(() => {
+  if (SORT_OPTIONS.some((option) => option.value === sort.value)) return SORT_OPTIONS;
+  const [key, direction] = sort.value.match(/^(.*)_(asc|desc)$/)?.slice(1) ?? [];
+  const label = key === "name" ? "名称" : COLUMN_OPTIONS.find((item) => item.value === key)?.label;
+  return label ? [...SORT_OPTIONS, { label: `${label} · ${direction === "asc" ? "升序" : "降序"}`, value: sort.value }] : SORT_OPTIONS;
+});
+const COLUMN_OPTIONS = [
+  { label: "ID", value: "url_id" },
+  { label: "域名", value: "domain" },
+  { label: "完整 URL", value: "source_url" },
+  { label: "判定", value: "verdict" },
+  { label: "实跑", value: "proven" },
+  { label: "成功率", value: "success_rate" },
+  { label: "最近测试", value: "last_test_at" },
+  { label: "最近错误", value: "last_error" },
+  { label: "权重", value: "weight" },
+  { label: "启用", value: "enabled" },
+];
+const defaultColumns = COLUMN_OPTIONS.filter((item) => item.value !== "source_url").map((item) => item.value);
+function storedColumns(): string[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem("pool-columns") || "null");
+    return Array.isArray(stored) ? stored.filter((key) => COLUMN_OPTIONS.some((item) => item.value === key)) : defaultColumns;
+  } catch { return defaultColumns; }
+}
+const visibleColumns = ref(storedColumns());
+function setVisibleColumns(keys: string[]) {
+  visibleColumns.value = keys;
+  localStorage.setItem("pool-columns", JSON.stringify(keys));
+}
+function sortOrder(key: string) {
+  return sort.value === `${key}_asc` ? "ascend" : sort.value === `${key}_desc` ? "descend" : false;
+}
 
 const TYPE_OPTIONS = [
   { label: "书源", value: "book" },
@@ -77,17 +186,27 @@ function toggleVisibleItem(urlId: number, checked: boolean) {
 
 const TEST_POLL_MS = 1500;
 
-const testing = ref<SourceTestProgress | null>(null);
+const testing = ref<SourceTestProgress[]>([]);
+const TEST_TASKS_KEY = "pool-test-tasks";
+function rememberTests() {
+  sessionStorage.setItem(TEST_TASKS_KEY, JSON.stringify(testing.value.map((task) => task.task_id)));
+}
+const submittingTest = ref(false);
 const testLimit = ref(50);
 const untestedOnly = ref(false);
 let testTimer: number | undefined;
+let pollGeneration = 0;
+const clearingQueue = ref(false);
+const testTotal = computed(() => testing.value.reduce((total, task) => total + task.total, 0));
+const testDone = computed(() => testing.value.reduce((total, task) => total + task.done, 0));
 
 async function startTest(urlIds?: number[]) {
-  if (testing.value) return;
+  if (submittingTest.value) return;
   if (urlIds && urlIds.length > 500) {
     message.warning("单次最多测试 500 个源，请缩小选择范围");
     return;
   }
+  submittingTest.value = true;
   try {
     const accepted = await api.testSources({
       source_type: sourceType.value,
@@ -96,46 +215,83 @@ async function startTest(urlIds?: number[]) {
       ...(urlIds ? { url_ids: urlIds } : {}),
     });
     message.success(`已排入 ${accepted.queued} 个源`);
-    testing.value = {
+    testing.value.push({
       task_id: accepted.task_id,
       state: "running",
       total: accepted.queued,
       done: 0,
       failed: 0,
       detail: "",
-    };
+    });
+    rememberTests();
     pollTest();
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "启动测试失败");
+  } finally {
+    submittingTest.value = false;
+  }
+}
+
+async function testAll() {
+  if (submittingTest.value) return;
+  submittingTest.value = true;
+  try {
+    const accepted = await api.testAllSources(sourceType.value);
+    testing.value.push({ task_id: accepted.task_id, state: "running", total: accepted.queued, done: 0, failed: 0, detail: "" });
+    rememberTests();
+    message.success(`已排入 ${accepted.queued} 个有规则源`);
+    pollTest();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "一键测试失败");
+  } finally {
+    submittingTest.value = false;
   }
 }
 
 function pollTest() {
   window.clearTimeout(testTimer);
+  const generation = pollGeneration;
   testTimer = window.setTimeout(async () => {
-    const task = testing.value;
-    if (!task) return;
-    try {
-      const progress = await api.testProgress(task.task_id);
-      testing.value = progress;
-      if (progress.state === "running") {
-        pollTest();
-        return;
+    const finished = new Set<string>();
+    for (const task of [...testing.value]) {
+      try {
+        const progress = await api.testProgress(task.task_id);
+        if (generation !== pollGeneration) return;
+        Object.assign(task, progress);
+        if (progress.state === "running") continue;
+        finished.add(task.task_id);
+        if (progress.state === "cancelled") continue;
+        if (progress.state === "error") message.error(`测试中断：${progress.detail}`);
+        else message.success(`测试完成：${progress.done - progress.failed} 个可用，${progress.failed} 个失败`);
+      } catch {
+        if (generation !== pollGeneration) return;
+        finished.add(task.task_id);
+        message.error("测试进度获取失败");
       }
-      //  跑完了刷新列表 —— 成功率是第一排序键，顺序会变
-      testing.value = null;
-      await load();
-      if (progress.state === "error") message.error(`测试中断：${progress.detail}`);
-      else {
-        const ok = progress.done - progress.failed;
-        message.success(`测试完成：${ok} 个可用，${progress.failed} 个失败`);
-      }
-    } catch {
-      //  任务过期（tracker 只保留 10 分钟）就别再问了
-      testing.value = null;
-      void load();
     }
+    testing.value = testing.value.filter((task) => !finished.has(task.task_id));
+    rememberTests();
+    if (finished.size) await load();
+    if (testing.value.length) pollTest();
   }, TEST_POLL_MS);
+}
+
+async function clearQueue() {
+  if (clearingQueue.value) return;
+  clearingQueue.value = true;
+  try {
+    const result = await api.clearTestQueue();
+    pollGeneration += 1;
+    window.clearTimeout(testTimer);
+    testing.value = [];
+    rememberTests();
+    message.success(`已取消 ${result.cancelled} 轮测试`);
+    await load();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "清空队列失败");
+  } finally {
+    clearingQueue.value = false;
+  }
 }
 
 async function resetScores() {
@@ -157,6 +313,7 @@ async function load() {
     page.value = await api.pool({
       source_type: sourceType.value,
       state: state.value,
+      sort: sort.value,
       q: keyword.value.trim(),
       limit: pageSize.value,
       offset: (pageNo.value - 1) * pageSize.value,
@@ -169,6 +326,20 @@ async function load() {
 }
 
 function reload() {
+  selectedIds.value = [];
+  pageNo.value = 1;
+  return load();
+}
+
+function setPageSize(size: number) {
+  pageSize.value = size;
+  pageNo.value = 1;
+  return load();
+}
+
+function setSort(next: DataTableSortState | null) {
+  const key = next?.columnKey === "last_test_at" ? "last_test" : next?.columnKey;
+  sort.value = key && next?.order ? `${key}_${next.order === "ascend" ? "asc" : "desc"}` : "rank";
   selectedIds.value = [];
   pageNo.value = 1;
   return load();
@@ -203,21 +374,31 @@ async function scanSources() {
 async function setSelectedEnabled(enabled: boolean) {
   if (bulkBusy.value || !selectedIds.value.length) return;
   bulkBusy.value = true;
-  const failed: number[] = [];
-  for (let start = 0; start < selectedIds.value.length; start += 8) {
-    const batch = selectedIds.value.slice(start, start + 8);
-    const results = await Promise.allSettled(
-      batch.map((urlId) => api.patchPoolSource(sourceType.value, urlId, { enabled })),
-    );
-    results.forEach((result, index) => {
-      if (result.status === "rejected") failed.push(batch[index]!);
-    });
+  try {
+    const result = await api.patchPoolSources(sourceType.value, selectedIds.value, enabled);
+    selectedIds.value = [];
+    await load();
+    message.success(`已${enabled ? "启用" : "停用"} ${result.updated} 个源`);
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "批量操作失败");
+  } finally {
+    bulkBusy.value = false;
   }
-  selectedIds.value = failed;
-  await load();
-  bulkBusy.value = false;
-  if (failed.length) message.error(`${failed.length} 个源操作失败，请重试`);
-  else message.success(`已${enabled ? "启用" : "停用"}所选源`);
+}
+
+async function setLatestTestEnabled(outcome: "success" | "failure") {
+  if (bulkBusy.value || testing.value.length) return;
+  bulkBusy.value = true;
+  try {
+    const type = sourceType.value;
+    const result = await api.patchPoolByLatestTest(type, outcome);
+    message.success(`已${outcome === "success" ? "启用" : "停用"} ${result.updated} 个${type === "book" ? "书源" : "订阅源"}`);
+    await load();
+  } catch (reason) {
+    message.error(reason instanceof Error ? reason.message : "批量操作失败");
+  } finally {
+    bulkBusy.value = false;
+  }
 }
 
 async function patch(row: PoolSource, payload: Record<string, unknown>) {
@@ -231,18 +412,25 @@ async function patch(row: PoolSource, payload: Record<string, unknown>) {
   }
 }
 
-const columns = computed<DataTableColumns<PoolSource>>(() => [
+const columns = computed<DataTableColumns<PoolSource>>(() => {
+  const available: DataTableColumns<PoolSource> = [
   { type: "selection", multiple: true },
-  { title: "url_id", key: "url_id", width: 100 },
+  { title: "ID", key: "url_id", width: 100, sorter: true, sortOrder: sortOrder("url_id") },
   {
     title: "名称",
     key: "name",
+    sorter: true,
+    sortOrder: sortOrder("name"),
     ellipsis: { tooltip: true },
     render: (row) => row.name || h("span", { class: "muted" }, `源 ${row.url_id}`),
   },
+  { title: "域名", key: "domain", width: 170, ellipsis: { tooltip: true }, sorter: true, sortOrder: sortOrder("domain"), render: (row) => row.domain || h("span", { class: "muted" }, "—") },
+  { title: "完整 URL", key: "source_url", ellipsis: { tooltip: true }, sorter: true, sortOrder: sortOrder("source_url"), render: (row) => row.source_url || h("span", { class: "muted" }, "—") },
   {
     title: "判定",
     key: "verdict",
+    sorter: true,
+    sortOrder: sortOrder("verdict"),
     width: 190,
     render: (row) =>
       h(NSpace, { size: 4 }, () => [
@@ -260,6 +448,8 @@ const columns = computed<DataTableColumns<PoolSource>>(() => [
   {
     title: "实跑",
     key: "proven",
+    sorter: true,
+    sortOrder: sortOrder("proven"),
     width: 160,
     render: (row) => {
       //  这一列才是可用性的真相。静态判定说「能用」不代表真能跑通。
@@ -271,12 +461,14 @@ const columns = computed<DataTableColumns<PoolSource>>(() => [
         );
       }
       if (row.fail_count) return h("span", { class: "bad" }, `失败 ${row.fail_count} 次`);
-      return h("span", { class: "muted" }, "没跑过");
+      return h("span", { class: "muted" }, row.test_count ? "未成功" : "没跑过");
     },
   },
   {
     title: "成功率",
     key: "success_rate",
+    sorter: true,
+    sortOrder: sortOrder("success_rate"),
     width: 130,
     render: (row) => {
       //  没测过给「—」而不是 0%：「没测过」和「测了全失败」在排序里差着 0.5，
@@ -294,15 +486,29 @@ const columns = computed<DataTableColumns<PoolSource>>(() => [
     },
   },
   {
+    title: "最近测试",
+    key: "last_test_at",
+    width: 140,
+    sorter: true,
+    sortOrder: sortOrder("last_test"),
+    render: (row) => row.last_test_at
+      ? h("span", { title: formatTime(row.last_test_at) }, fromNow(row.last_test_at))
+      : h("span", { class: "muted" }, row.test_count ? "时间未知" : "未测试"),
+  },
+  {
     title: "最近错误",
     key: "last_error",
+    sorter: true,
+    sortOrder: sortOrder("last_error"),
     ellipsis: { tooltip: true },
     render: (row) => row.last_error || h("span", { class: "muted" }, "—"),
   },
-  { title: "权重", key: "weight", width: 72 },
+  { title: "权重", key: "weight", width: 90, sorter: true, sortOrder: sortOrder("weight") },
   {
     title: "启用",
     key: "enabled",
+    sorter: true,
+    sortOrder: sortOrder("enabled"),
     width: 78,
     render: (row) =>
       h(NSwitch, {
@@ -314,19 +520,32 @@ const columns = computed<DataTableColumns<PoolSource>>(() => [
   {
     title: "操作",
     key: "actions",
-    width: 110,
+    width: 220,
     render: (row) =>
-      row.fail_count
-        ? h(
+      h(NSpace, { size: 4, wrap: false }, () => [
+        h(NButton, { size: "tiny", quaternary: true, onClick: () => openEditor(row) }, { icon: () => h(CreateOutline), default: () => "查看 / 编辑" }),
+        row.source_type === "rss" ? h(NButton, { size: "tiny", quaternary: true, loading: optimizingId.value === row.url_id, onClick: () => optimize(row) }, { icon: () => h(SparklesOutline), default: () => "AI 优化" }) : null,
+        row.fail_count ? h(
             NButton,
             { size: "tiny", quaternary: true, onClick: () => patch(row, { reset_failures: true }) },
             () => "清失败",
-          )
-        : h("span", { class: "muted" }, "—"),
+          ) : null,
+      ]),
   },
-]);
+  ];
+  return available.filter((column) => !('key' in column) || column.key === "name" || column.key === "actions" || visibleColumns.value.includes(String(column.key)));
+});
 
-onMounted(load);
+onMounted(() => {
+  try {
+    const ids = JSON.parse(sessionStorage.getItem(TEST_TASKS_KEY) || "[]");
+    if (Array.isArray(ids)) {
+      testing.value = ids.filter((id): id is string => typeof id === "string").map((task_id) => ({ task_id, state: "running", total: 0, done: 0, failed: 0, detail: "" }));
+      if (testing.value.length) pollTest();
+    }
+  } catch { sessionStorage.removeItem(TEST_TASKS_KEY); }
+  load();
+});
 </script>
 
 <template>
@@ -337,7 +556,7 @@ onMounted(load);
         <p class="head__sub">书源和订阅源规则</p>
       </div>
       <n-space>
-        <n-button type="primary" :loading="scanning" :disabled="Boolean(testing) || bulkBusy" @click="scanSources">
+        <n-button type="primary" :loading="scanning" :disabled="Boolean(testing.length) || bulkBusy" @click="scanSources">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           扫描{{ sourceType === "book" ? "书源" : "订阅源" }}
         </n-button>
@@ -375,30 +594,46 @@ onMounted(load);
     </section>
 
     <div class="filters">
-      <n-select v-model:value="sourceType" :options="TYPE_OPTIONS" class="filters__type" :disabled="scanning || bulkBusy || Boolean(testing)" @update:value="reload" />
+      <n-select v-model:value="sourceType" :options="TYPE_OPTIONS" class="filters__type" :disabled="scanning || bulkBusy" @update:value="reload" />
       <n-select v-model:value="state" :options="STATE_OPTIONS" class="filters__state" @update:value="reload" />
-      <n-input v-model:value="keyword" placeholder="搜源名" clearable @keyup.enter="reload" @clear="reload">
+      <n-select v-model:value="sort" :options="sortOptions" class="filters__sort" @update:value="reload" />
+      <n-input v-model:value="keyword" class="filters__keyword" placeholder="搜源名" clearable @keyup.enter="reload" @clear="reload">
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
       <n-button type="primary" @click="reload">查询</n-button>
+      <n-popover trigger="click" placement="bottom-end">
+        <template #trigger><n-button aria-label="选择显示列"><template #icon><n-icon><OptionsOutline /></n-icon></template>列设置</n-button></template>
+        <n-checkbox-group :value="visibleColumns" @update:value="(keys: (string | number)[]) => setVisibleColumns(keys.map(String))">
+          <div class="column-picker"><n-checkbox v-for="item in COLUMN_OPTIONS" :key="item.value" :value="item.value" :label="item.label" /></div>
+        </n-checkbox-group>
+      </n-popover>
     </div>
 
     <div class="testbar">
       <div class="testbar__main">
         <span v-if="selectedIds.length">已选 {{ selectedIds.length }} 个</span>
         <n-button v-if="selectedIds.length" size="small" quaternary @click="selectedIds = []">清空选择</n-button>
-        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="setSelectedEnabled(true)">批量启用</n-button>
-        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="setSelectedEnabled(false)">批量停用</n-button>
-        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || Boolean(testing) || scanning" @click="startTest(selectedIds)">测试已选</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || scanning" @click="setSelectedEnabled(true)">批量启用</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || scanning" @click="setSelectedEnabled(false)">批量停用</n-button>
+        <n-button size="small" :disabled="!selectedIds.length || bulkBusy || submittingTest || scanning" @click="startTest(selectedIds)">测试已选</n-button>
         <n-button
           type="primary"
           secondary
-          :loading="Boolean(testing)"
+          :loading="submittingTest"
           :disabled="bulkBusy || scanning"
           @click="startTest()"
         >
           批量测试
         </n-button>
+        <n-button size="small" :disabled="submittingTest || scanning" @click="testAll">一键测试全部</n-button>
+        <n-popconfirm @positive-click="setLatestTestEnabled('failure')">
+          <template #trigger><n-button size="small" :disabled="!page?.summary.last_test_failed_enabled || bulkBusy || scanning || Boolean(testing.length)">最近一次失败的停用 ({{ page?.summary.last_test_failed_enabled ?? 0 }})</n-button></template>
+          停用当前类型中最近一次主动测试失败、目前仍启用的 {{ page?.summary.last_test_failed_enabled ?? 0 }} 个源？
+        </n-popconfirm>
+        <n-popconfirm @positive-click="setLatestTestEnabled('success')">
+          <template #trigger><n-button size="small" :disabled="!page?.summary.last_test_success_disabled || bulkBusy || scanning || Boolean(testing.length)">最近一次成功的启用 ({{ page?.summary.last_test_success_disabled ?? 0 }})</n-button></template>
+          启用当前类型中最近一次主动测试成功、目前已停用的 {{ page?.summary.last_test_success_disabled ?? 0 }} 个源？
+        </n-popconfirm>
         <n-input-number
           v-model:value="testLimit"
           :min="1"
@@ -406,24 +641,26 @@ onMounted(load);
           :step="10"
           size="small"
           class="testbar__limit"
-          :disabled="Boolean(testing)"
+          :disabled="submittingTest"
         />
-        <n-checkbox v-model:checked="untestedOnly" :disabled="Boolean(testing)">
+        <n-checkbox v-model:checked="untestedOnly" :disabled="submittingTest">
           只测没测过的
         </n-checkbox>
         <n-popconfirm @positive-click="resetScores">
           <template #trigger>
-            <n-button size="small" quaternary :disabled="Boolean(testing)">清空成绩</n-button>
+            <n-button size="small" quaternary :disabled="Boolean(testing.length)">清空成绩</n-button>
           </template>
           会把当前类型下所有源的测试次数与成功次数清零，排序回到未测状态。确定吗？
         </n-popconfirm>
+        <n-button v-if="testing.length" size="small" type="error" secondary :loading="clearingQueue" @click="clearQueue"><template #icon><n-icon><TrashOutline /></n-icon></template>清空测试队列</n-button>
       </div>
       <n-progress
-        v-if="testing"
+        v-if="testing.length"
         type="line"
-        :percentage="testing.total ? Math.round((testing.done / testing.total) * 100) : 0"
+        :percentage="testTotal ? Math.round((testDone / testTotal) * 100) : 0"
         :indicator-placement="'inside'"
       />
+      <span v-if="testing.length" class="testbar__status">{{ testing.length }} 轮测试 · {{ testDone }}/{{ testTotal }}</span>
     </div>
 
     <n-alert v-if="error" type="error" :title="error" class="alert" />
@@ -438,6 +675,8 @@ onMounted(load);
         @update:checked-row-keys="setSelection"
         size="small"
         :bordered="false"
+        remote
+        @update:sorter="setSort"
       />
     </div>
 
@@ -453,6 +692,7 @@ onMounted(load);
           <strong>{{ item.name || `源 ${item.url_id}` }}</strong>
           <n-switch :value="item.enabled" size="small" :aria-label="`${item.enabled ? '停用' : '启用'} ${item.name || item.url_id}`" @update:value="(value: boolean) => patch(item, { enabled: value })" />
         </div>
+        <div v-if="item.domain" class="mobile-pool__domain">{{ item.domain }}</div>
         <div class="mobile-pool__meta">
           <span v-if="!item.is_complete">规则不全</span>
           <span v-if="item.needs_js">需要 JS</span>
@@ -461,20 +701,46 @@ onMounted(load);
           <span v-else-if="item.fail_count">失败 {{ item.fail_count }} 次</span>
           <span v-else>未实跑</span>
           <span v-if="item.success_rate !== null">测试 {{ Math.round(item.success_rate * 100) }}%</span>
+          <span v-if="item.last_test_at" :title="formatTime(item.last_test_at)">最近测试 {{ fromNow(item.last_test_at) }}</span>
+          <span v-else>{{ item.test_count ? "时间未知" : "未测试" }}</span>
         </div>
         <div v-if="item.last_error" class="mobile-pool__error">{{ item.last_error }}</div>
+        <n-button size="small" quaternary class="mobile-pool__reset" @click="openEditor(item)"><template #icon><n-icon><CreateOutline /></n-icon></template>查看 / 编辑</n-button>
+        <n-button v-if="item.source_type === 'rss'" size="small" quaternary class="mobile-pool__reset" :loading="optimizingId === item.url_id" @click="optimize(item)"><template #icon><n-icon><SparklesOutline /></n-icon></template>AI 优化</n-button>
         <n-button v-if="item.fail_count" size="small" quaternary class="mobile-pool__reset" @click="patch(item, { reset_failures: true })">清失败记录</n-button>
       </article>
     </div>
 
     <n-pagination
-      v-if="page && page.total > pageSize"
+      v-if="page && page.total > 0"
       v-model:page="pageNo"
       :page-count="Math.ceil(page.total / pageSize)"
       :page-size="pageSize"
+      show-size-picker
+      :page-sizes="[10, 20, 50, 100, 500, 1000]"
       class="pager"
       @update:page="load"
+      @update:page-size="setPageSize"
     />
+
+    <n-modal v-model:show="editorOpen" preset="card" class="rules-modal" :title="editing?.source.name || '源规则'" :mask-closable="!editorSaving">
+      <n-spin :show="editorLoading">
+        <n-alert v-if="editorError" type="error" :title="editorError" class="alert" />
+        <n-alert v-if="editorHint" type="info" :title="editorHint" class="alert" />
+        <template v-if="editing">
+          <dl class="rules-meta">
+            <div><dt>原始地址</dt><dd>{{ editing.source.source_url || '未填写' }}</dd></div>
+            <div><dt>索引标识</dt><dd>{{ editing.index_key || '无' }}</dd></div>
+            <div><dt>状态</dt><dd>{{ editing.source.enabled ? '已启用' : '已停用' }} · {{ editing.source.is_complete ? '规则完整' : '规则不全' }} · {{ editing.source.has_explore ? '可浏览' : '不可浏览' }}</dd></div>
+          </dl>
+          <n-input v-model:value="editorText" type="textarea" :autosize="{ minRows: 16, maxRows: 26 }" spellcheck="false" aria-label="源规则 JSON" class="rules-editor" />
+          <div class="rules-actions">
+            <n-button @click="editorOpen = false">关闭</n-button>
+            <n-button type="primary" :loading="editorSaving" :disabled="optimizingId !== null" @click="saveEditor">保存规则</n-button>
+          </div>
+        </template>
+      </n-spin>
+    </n-modal>
   </div>
 </template>
 
@@ -556,6 +822,23 @@ onMounted(load);
   width: 140px;
 }
 
+.filters__sort {
+  width: 180px;
+}
+
+.filters__keyword { width: 220px; flex: 1 1 220px; max-width: 360px; }
+
+.column-picker { display: grid; grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 8px 16px; }
+.mobile-pool__domain { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+
+.rules-modal { width: min(900px, calc(100vw - 32px)); }
+.rules-meta { display: grid; gap: 8px; margin: 0 0 16px; font-size: 12px; }
+.rules-meta div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+.rules-meta dt { color: var(--text-muted); }
+.rules-meta dd { margin: 0; overflow-wrap: anywhere; }
+.rules-editor :deep(textarea) { font-family: monospace; }
+.rules-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
 .testbar {
   display: flex;
   flex-direction: column;
@@ -618,8 +901,8 @@ onMounted(load);
   .stat:nth-child(3) { border-right: 1px solid var(--border-subtle); }
   .stat:nth-child(even) { border-right: 0; }
   .stat:nth-child(4) { border-bottom: 1px solid var(--border-subtle); }
-  .filters__type, .filters__state { flex: 1; width: auto; }
-  .filters .n-input { flex-basis: 100%; }
+  .filters__type, .filters__state, .filters__sort { flex: 1; width: auto; }
+  .filters__keyword { flex-basis: 100%; max-width: none; }
   .table-scroll { display: none; }
   .mobile-pool-list { display: grid; gap: 10px; }
   .mobile-pool {

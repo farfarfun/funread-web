@@ -79,9 +79,29 @@ export interface PoolSource {
   test_ok_count: number;
   /** `test_ok_count / test_count`。**候选池的第一排序键**；没测过时为 `null`。 */
   success_rate: number | null;
+  /** 最近一次管理端主动测试，成功或失败都会更新。 */
+  last_test_at: string;
+  last_test_ok: boolean | null;
   /** 最近一次实跑成功。 */
   last_ok_at: string;
   last_error: string;
+  source_url: string;
+  domain: string;
+}
+
+export interface PoolRules {
+  source: PoolSource;
+  rules: Record<string, unknown>;
+  index_key: string;
+  updated_at: string;
+}
+
+export interface PoolOptimizeResult {
+  status: "ok" | "suggested";
+  reason: string;
+  before_count: number;
+  after_count: number;
+  rules: Record<string, unknown>;
 }
 
 export interface SourceTestAccepted {
@@ -91,7 +111,7 @@ export interface SourceTestAccepted {
 
 export interface SourceTestProgress {
   task_id: string;
-  state: "running" | "done" | "error";
+  state: "running" | "done" | "error" | "cancelled";
   total: number;
   done: number;
   failed: number;
@@ -112,6 +132,8 @@ export interface PoolPage {
     has_explore: number;
     proven: number;
     failing: number;
+    last_test_failed_enabled: number;
+    last_test_success_disabled: number;
   };
 }
 

@@ -17,6 +17,8 @@ import type {
   ExploreSourcePage,
   ManagedUser,
   PoolPage,
+  PoolOptimizeResult,
+  PoolRules,
   PoolSource,
   RssArticleDetail,
   RssArticlePage,
@@ -224,18 +226,34 @@ export const api = {
     request<ExplorePage>("/reader/explore", { params }),
 
   // -------------------------------------------------------------- 候选源池（B 端）
-  pool: (params: { source_type?: SourceType; q?: string; state?: string; limit?: number; offset?: number }) =>
+  pool: (params: { source_type?: SourceType; q?: string; state?: string; sort?: string; limit?: number; offset?: number }) =>
     request<PoolPage>("/pool", { params }),
   patchPoolSource: (
     source_type: SourceType,
     url_id: number,
     payload: { enabled?: boolean; weight?: number; reset_failures?: boolean },
   ) => request<PoolSource>(`/pool/${source_type}/${url_id}`, { method: "PATCH", ...json(payload) }),
+  poolRules: (source_type: SourceType, url_id: number) =>
+    request<PoolRules>(`/pool/${source_type}/${url_id}/rules`),
+  savePoolRules: (source_type: SourceType, url_id: number, rules: Record<string, unknown>, updated_at: string) =>
+    request<PoolRules>(`/pool/${source_type}/${url_id}/rules`, { method: "PUT", ...json({ rules, updated_at }) }),
+  optimizePoolRss: (url_id: number) =>
+    request<PoolOptimizeResult>(`/pool/rss/${url_id}/optimize`, { method: "POST" }),
+  patchPoolSources: (source_type: SourceType, url_ids: number[], enabled: boolean) =>
+    request<{ updated: number }>(`/pool/batch/${source_type}`, {
+      method: "PATCH",
+      ...json({ url_ids, enabled }),
+    }),
+  patchPoolByLatestTest: (source_type: SourceType, outcome: "success" | "failure") =>
+    request<{ updated: number }>(`/pool/batch/${source_type}/latest-test/${outcome}`, { method: "PATCH" }),
 
   //  批量测试。202 立刻返回，进度轮询 testProgress。
   testSources: (payload: { source_type?: SourceType; limit?: number; untested_only?: boolean; url_ids?: number[] }) =>
     request<SourceTestAccepted>("/pool/test", { method: "POST", ...json(payload) }),
+  testAllSources: (source_type: SourceType) =>
+    request<SourceTestAccepted>("/pool/test/all", { method: "POST", params: { source_type } }),
   testProgress: (task_id: string) => request<SourceTestProgress>(`/pool/test/${task_id}`),
+  clearTestQueue: () => request<{ cancelled: number }>("/pool/test/queue", { method: "DELETE" }),
   resetScores: (source_type: SourceType, url_id?: number) =>
     request<{ reset: number }>(`/pool/test/${source_type}/scores`, {
       method: "DELETE",
