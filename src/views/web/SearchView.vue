@@ -12,8 +12,10 @@
  */
 import { SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { useRouter } from "vue-router";
+
+defineOptions({ name: "SearchView" });
 
 import { api } from "../../api/client";
 import type { SearchBook, SearchPage } from "../../api/types";
@@ -40,6 +42,11 @@ const error = ref("");
 const page = ref<SearchPage | null>(null);
 const items = ref<SearchBook[]>([]);
 let searchVersion = 0;
+let searchAbort: AbortController | null = null;
+
+onBeforeUnmount(() => {
+  searchAbort?.abort();
+});
 
 const hasMore = computed(() => {
   const current = page.value;
@@ -65,14 +72,20 @@ async function run(term?: string) {
   items.value = [];
   loadingMore.value = false;
   const version = ++searchVersion;
+  searchAbort?.abort();
+  const controller = new AbortController();
+  searchAbort = controller;
   try {
-    const result = await api.search({ keyword: value, limit: PAGE_SIZE, offset: 0 });
+    const result = await api.search(
+      { keyword: value, limit: PAGE_SIZE, offset: 0 },
+      { signal: controller.signal },
+    );
     if (version !== searchVersion) return;
     page.value = result;
     items.value = result.items;
     remember(value);
   } catch (reason) {
-    if (version !== searchVersion) return;
+    if (version !== searchVersion || controller.signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "搜索失败";
   } finally {
     if (version === searchVersion) loading.value = false;
@@ -110,6 +123,7 @@ useShortcuts({
   "/": () => input.value?.focus(),
   Escape: () => {
     searchVersion += 1;
+    searchAbort?.abort();
     keyword.value = "";
     activeKeyword.value = "";
     page.value = null;
@@ -276,7 +290,7 @@ function open(book: SearchBook) {
 }
 
 .stats__js {
-  color: #f0a020;
+  color: var(--warning);
 }
 
 .state {

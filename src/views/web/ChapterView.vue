@@ -28,7 +28,6 @@ import type {
   ShelfBook,
   SwitchCandidate,
   SwitchSourcePage,
-  SwitchSourceResult,
 } from "../../api/types";
 import ChapterList from "../../components/web/ChapterList.vue";
 import ReaderMenu from "../../components/web/ReaderMenu.vue";
@@ -36,9 +35,13 @@ import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import SwitchSourceDrawer from "../../components/web/SwitchSourceDrawer.vue";
 import {
   cachedIndexes as readCachedIndexes,
+  clearBook,
+  readBookOfflineMeta,
   readChapter,
+  saveBookOfflineMeta,
   writeChapter,
 } from "../../utils/offline";
+import { describeSwitch } from "../../utils/switch";
 import { useAutoScroll } from "../../composables/useAutoScroll";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 import { useShortcuts } from "../../composables/useShortcuts";
@@ -82,19 +85,30 @@ const error = ref("");
 const showToolbar = ref(false);
 const showToc = ref(false);
 const showSettings = ref(false);
+const settingsTab = ref<"layout" | "theme" | "voice">("layout");
 const showSources = ref(false);
 const sourcesLoading = ref(false);
 const chapterFilter = ref("");
+const offlineMode = ref(false);
+const scrollPercent = ref(0);
 
 /**
- * 亮度。0-100，100 = 不压暗。
+ * 亮度。20-100，100 = 不压暗。
  *
  * Web 没有屏幕亮度 API，所以这是一层半透明黑色遮罩 —— **只能压暗不能调亮**。
- * 夜里读书时「再暗一点」是真实需求（系统最低亮度仍然刺眼），所以值得做；
- * 但界面上必须说明这个限制，否则用户会拖到 100 以为能更亮。
  */
 const BRIGHTNESS_KEY = "funread.reader.brightness";
-const brightness = ref(Number(localStorage.getItem(BRIGHTNESS_KEY)) || 100);
+function readBrightness(): number {
+  try {
+    const raw = localStorage.getItem(BRIGHTNESS_KEY);
+    if (raw === null) return 100;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.min(100, Math.max(20, parsed)) : 100;
+  } catch {
+    return 100;
+  }
+}
+const brightness = ref(readBrightness());
 watch(brightness, (value) => {
   try {
     localStorage.setItem(BRIGHTNESS_KEY, String(value));
@@ -106,25 +120,39 @@ watch(brightness, (value) => {
 const scroller = ref<HTMLElement | null>(null);
 const autoScroll = useAutoScroll(scroller);
 const speech = useSpeech();
+
+//  拖动「自动翻页速度」滑块时实时生效，无需停下再重开
+watch(
+  () => settings.value.autoScrollSpeed,
+  (speed) => {
+    if (speed > 0) autoScroll.speed.value = speed;
+  },
+);
+
+//  朗读切到新段落时轻柔居中滚动，避免正在朗读的段落滚出屏幕
+watch(
+  () => speech.index.value,
+  (pos) => {
+    if (pos < 0) return;
+    const node = paragraphNodes()[pos];
+    node?.scrollIntoView({ behavior: "smooth", block: "center" });
+  },
+);
 let saveTimer: number | undefined;
 let pendingOffset = 0;
+let chapterLoadVersion = 0;
+let chapterAbort: AbortController | null = null;
+/** 用户选择「留在这里」后记住那个远端章号，避免切回标签页时反复弹窗打扰。 */
+let dismissedRemoteChapter: number | null = null;
 
-/** 换源结果的中文说明。方式不同，用户要做的事不同。 */
-function describeSwitch(result: SwitchSourceResult, sourceName: string): string {
-  const where = sourceName ? `「${sourceName}」` : "新源";
-  const position = `第 ${result.chapter_index + 1} / ${result.total} 章`;
-  switch (result.method) {
-    case "exact":
-      return `已切换到${where}，定位到${position}`;
-    case "normalized":
-      return `已切换到${where}，按章节名定位到${position}`;
-    case "position":
-      return `已切换到${where}，按位置估到${position}，可能有偏差`;
-    case "none":
-      return `已切换到${where}，但没取到目录，请手动选章`;
-    default:
-      return `已切换到${where}`;
-  }
+function openSettings(tab: "layout" | "theme" | "voice") {
+  settingsTab.value = tab;
+  showSettings.value = true;
+}
+
+function goBack() {
+  if (window.history.state?.back) router.back();
+  else void router.replace({ name: "book", params: { bookKey: bookKey.value } });
 }
 
 const current = computed(() => chapters.value[index.value] ?? null);
@@ -170,27 +198,59 @@ function paragraphNodes(): HTMLElement[] {
 async function bootstrap() {
   loading.value = true;
   error.value = "";
+  offlineMode.value = false;
   try {
     //  书架只用来恢复「读到哪」和兜底来源信息，**不是进正文页的前提**。
-    //  未登录时这里会 401，catch 成空书架继续走 —— 试读不需要身份。
+    //  未登录或断网时这里会失败，catch 成空书架继续走 —— 离线缓存也能兜底。
     const shelf = await api.shelf().catch(() => [] as ShelfBook[]);
     shelfBook.value = shelf.find((item) => item.book_key === bookKey.value) ?? null;
 
     const bookUrl = String(route.query.book_url || shelfBook.value?.book_url || "");
     urlId.value = Number(route.query.url_id) || shelfBook.value?.url_id || 0;
-    if (!bookUrl || !urlId.value) {
-      error.value = "缺少来源信息，请从搜索结果或书架进入";
-      return;
-    }
-    origin.value = {
-      book_url: bookUrl,
-      name: String(route.query.name || shelfBook.value?.name || ""),
-      author: String(route.query.author || shelfBook.value?.author || ""),
-    };
 
-    info.value = await api.bookInfo({ url_id: urlId.value, ...origin.value });
-    const toc = await api.toc(urlId.value, info.value);
-    chapters.value = toc.items;
+    let loadedOnline = false;
+    if (bookUrl && urlId.value) {
+      origin.value = {
+        book_url: bookUrl,
+        name: String(route.query.name || shelfBook.value?.name || ""),
+        author: String(route.query.author || shelfBook.value?.author || ""),
+      };
+      try {
+        info.value = await api.bookInfo({ url_id: urlId.value, ...origin.value });
+        const toc = await api.toc(urlId.value, info.value);
+        chapters.value = toc.items;
+        loadedOnline = true;
+        //  同步缓存元信息与目录到本机 IndexedDB，支撑后续真离线打开
+        void saveBookOfflineMeta(bookKey.value, urlId.value, info.value, chapters.value);
+      } catch (onlineErr) {
+        //  网络/服务器不可达时回退到本机离线目录，打通真离线阅读链路
+        const offlineMeta = await readBookOfflineMeta(bookKey.value);
+        if (offlineMeta && offlineMeta.chapters.length) {
+          urlId.value = offlineMeta.url_id;
+          info.value = offlineMeta.info;
+          chapters.value = offlineMeta.chapters;
+          offlineMode.value = true;
+        } else {
+          throw onlineErr;
+        }
+      }
+    } else {
+      const offlineMeta = await readBookOfflineMeta(bookKey.value);
+      if (offlineMeta && offlineMeta.chapters.length) {
+        urlId.value = offlineMeta.url_id;
+        info.value = offlineMeta.info;
+        chapters.value = offlineMeta.chapters;
+        origin.value = {
+          book_url: offlineMeta.info.book_url,
+          name: offlineMeta.info.name,
+          author: offlineMeta.info.author,
+        };
+        offlineMode.value = true;
+      } else {
+        error.value = "缺少来源信息，请从搜索结果或书架进入";
+        return;
+      }
+    }
 
     const requested = Number(route.query.chapter);
     index.value = Number.isFinite(requested)
@@ -200,6 +260,10 @@ async function bootstrap() {
     //  已下载标记读的是**本机**的离线存储，不是服务端那层缓存 —— 用户关心的是
     //  「这台设备断网了还能不能读」。不在书架的书也照样显示。
     void readCachedIndexes(bookKey.value).then((list) => (cachedIndexes.value = list));
+
+    if (!loadedOnline && offlineMode.value) {
+      message.info("当前处于离线模式，仅可阅读本机已缓存章节");
+    }
 
     await loadChapter(shelfBook.value?.progress?.char_offset ?? 0);
   } catch (reason) {
@@ -212,34 +276,55 @@ async function bootstrap() {
 async function loadChapter(restoreOffset = 0) {
   const chapter = current.value;
   if (!chapter || !info.value) return;
+  const version = ++chapterLoadVersion;
+  chapterAbort?.abort();
+  const controller = new AbortController();
+  chapterAbort = controller;
+
   loading.value = true;
   error.value = "";
   content.value = null;
+  scrollPercent.value = 0;
   try {
     //  **本机优先**。服务端那层缓存只能救「断外网不断内网」，真飞行模式下连不上
     //  自己的服务器，只有存在这台设备上的才读得到。
     const local = await readChapter(bookKey.value, chapter.index);
+    if (version !== chapterLoadVersion) return;
     if (local) {
       content.value = local;
     } else {
-      content.value = await api.content({
-        url_id: urlId.value,
-        chapter,
-        book: info.value,
-        //  带上 book_key，服务端那层缓存也会跟着填 —— 下次换台设备读这一章
-        //  就不用再去打源站了。
-        book_key: bookKey.value,
-      });
+      const fetched = await api.content(
+        {
+          url_id: urlId.value,
+          chapter,
+          book: info.value,
+          //  带上 book_key，服务端那层缓存也会跟着填 —— 下次换台设备读这一章
+          //  就不用再去打源站了。
+          book_key: bookKey.value,
+        },
+        { signal: controller.signal },
+      );
+      if (version !== chapterLoadVersion) return;
+      content.value = fetched;
       //  存本机是顺带的，失败（配额满、隐私模式）不该影响这次阅读
-      void writeChapter(bookKey.value, chapter.index, content.value);
+      void writeChapter(bookKey.value, chapter.index, fetched).then(() => {
+        if (!cachedIndexes.value.includes(chapter.index)) {
+          cachedIndexes.value = [...cachedIndexes.value, chapter.index].sort((a, b) => a - b);
+        }
+      });
     }
     //  内容渲染后再恢复位置，否则容器高度还是 0
-    requestAnimationFrame(() => restore(restoreOffset));
+    requestAnimationFrame(() => {
+      if (version !== chapterLoadVersion) return;
+      restore(restoreOffset);
+      updateScrollPercent();
+    });
     void save(restoreOffset, { immediate: true });
   } catch (reason) {
+    if (version !== chapterLoadVersion || controller.signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "正文加载失败";
   } finally {
-    loading.value = false;
+    if (version === chapterLoadVersion) loading.value = false;
   }
 }
 
@@ -330,7 +415,22 @@ async function save(offset: number, options: { immediate?: boolean } = {}) {
   }
 }
 
+function updateScrollPercent() {
+  const element = scroller.value;
+  if (!element) {
+    scrollPercent.value = 0;
+    return;
+  }
+  const scrollable = element.scrollHeight - element.clientHeight;
+  if (scrollable <= 0) {
+    scrollPercent.value = 100;
+    return;
+  }
+  scrollPercent.value = Math.min(100, Math.max(0, Math.round((element.scrollTop / scrollable) * 100)));
+}
+
 function onScroll() {
+  updateScrollPercent();
   pendingOffset = currentOffset();
   if (saveTimer) return;
   saveTimer = window.setTimeout(() => {
@@ -515,8 +615,10 @@ async function reloadFromNewSource(targetIndex: number) {
     const toc = await api.toc(urlId.value, info.value);
     chapters.value = toc.items;
     index.value = Math.min(Math.max(0, targetIndex), Math.max(0, chapters.value.length - 1));
-    //  换源清掉了章节缓存，已下载标记要跟着清
+    //  换源清掉了章节缓存，必须同步清理本机 IndexedDB，避免 loadChapter 读到旧源正文
+    await clearBook(bookKey.value);
     cachedIndexes.value = [];
+    void saveBookOfflineMeta(bookKey.value, urlId.value, info.value, chapters.value);
     //  换源后来源列表也变了（当前源不同），下次打开重新拉
     switchPage.value = null;
     if (scroller.value) scroller.value.scrollTop = 0;
@@ -563,19 +665,25 @@ async function checkRemoteProgress() {
   const remote = shelf?.find((item) => item.book_key === bookKey.value)?.progress;
   if (!remote || remote.chapter_index === index.value) return;
   const target = remote.chapter_index;
+  if (dismissedRemoteChapter === target) return;
   dialog.info({
     title: "别处读到了新进度",
     content: `另一台设备读到第 ${target + 1} 章，这一页停在第 ${index.value + 1} 章。`,
     positiveText: "跳过去",
     negativeText: "留在这里",
     onPositiveClick: () => {
+      dismissedRemoteChapter = null;
       index.value = Math.min(Math.max(0, target), Math.max(0, chapters.value.length - 1));
       void loadChapter(remote.char_offset ?? 0);
+    },
+    onNegativeClick: () => {
+      dismissedRemoteChapter = target;
     },
   });
 }
 
 onBeforeUnmount(() => {
+  chapterAbort?.abort();
   flush();
   //  朗读是全局的（speechSynthesis 不属于组件），不停掉会在离开页面后继续读
   speech.stop();
@@ -614,12 +722,18 @@ useShortcuts({
     router.push({ name: "book", params: { bookKey: bookKey.value } });
   },
 });
-
-watch(() => settings.value.theme, () => undefined);
 </script>
 
 <template>
   <div class="reader" :style="{ background: colors.bg }">
+    <!-- 顶部极细章内阅读进度线，零干扰呈现当前阅读位置 -->
+    <div
+      v-if="content && !loading && !error"
+      class="reader__progress-line"
+      :style="{ width: `${scrollPercent}%` }"
+      aria-hidden="true"
+    />
+
     <div
       ref="scroller"
       class="reader__scroll"
@@ -701,15 +815,29 @@ watch(() => settings.value.theme, () => undefined);
       :has-next="hasNext"
       :speech-supported="speech.supported"
       :speaking="speech.speaking.value"
+      @back="goBack"
       @prev="go(-1)"
       @next="go(1)"
       @jump="jumpTo"
       @toc="showToc = true"
       @speech="toggleSpeech"
-      @style="showSettings = true"
-      @settings="showSettings = true"
+      @style="openSettings('theme')"
+      @settings="openSettings('layout')"
       @switch-source="openSources"
     />
+
+    <!-- 常驻极简底部微状态条：作为独立底栏而非浮层，绝不遮挡正文文字 -->
+    <div
+      v-if="content && !loading && !error && !showToolbar"
+      class="reader__status"
+      :style="{ color: colors.muted, background: colors.bg }"
+      aria-hidden="true"
+    >
+      <span class="reader__status-title">{{ content?.title || current?.name }}</span>
+      <span class="reader__status-meta">
+        {{ offlineMode ? "离线 · " : "" }}{{ index + 1 }}/{{ chapters.length }} · {{ scrollPercent }}%
+      </span>
+    </div>
 
     <n-drawer v-model:show="showToc" placement="bottom" :height="440">
       <n-drawer-content title="目录" closable>
@@ -726,6 +854,7 @@ watch(() => settings.value.theme, () => undefined);
 
     <ReaderSettingsSheet
       v-model:show="showSettings"
+      v-model:tab="settingsTab"
       :speech-supported="speech.supported"
       :speech-voices="speech.voices.value"
       :speech-rate="speech.rate.value"
@@ -752,16 +881,55 @@ watch(() => settings.value.theme, () => undefined);
 .reader {
   position: fixed;
   inset: 0;
+  display: flex;
+  flex-direction: column;
   transition: background 0.2s var(--ease);
 }
 
+.reader__progress-line {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.55;
+  pointer-events: none;
+  transition: width 0.12s linear;
+}
+
 .reader__scroll {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   /* 刘海与手势条都要让开 */
-  padding-top: env(safe-area-inset-top, 0);
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+  padding-bottom: 16px;
+}
+
+.reader__status {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px var(--space-4) calc(env(safe-area-inset-bottom, 0px) + 6px);
+  font-size: 11px;
+  line-height: 1.4;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  user-select: none;
+}
+
+.reader__status-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.reader__status-meta {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .reader__center {

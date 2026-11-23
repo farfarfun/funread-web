@@ -26,6 +26,7 @@ import {
 import { SPEECH_RATE_RANGE } from "../../composables/useSpeech";
 
 const show = defineModel<boolean>("show", { required: true });
+const activeTab = defineModel<"layout" | "theme" | "voice">("tab", { default: "layout" });
 
 const props = withDefaults(
   defineProps<{
@@ -62,7 +63,7 @@ const fonts = Object.keys(FONT_STACK) as ReaderFont[];
 <template>
   <n-drawer v-model:show="show" placement="bottom" :height="520" :trap-focus="false">
     <n-drawer-content title="阅读设置" closable>
-      <n-tabs type="line" animated>
+      <n-tabs v-model:value="activeTab" type="line" animated>
         <!-- ---------------------------------------------------------- 排版 -->
         <n-tab-pane name="layout" tab="排版">
           <div class="group">
@@ -320,6 +321,6 @@ const fonts = Object.keys(FONT_STACK) as ReaderFont[];
 }
 
 .note--warn {
-  color: #f0a020;
+  color: var(--warning);
 }
 </style>

@@ -14,7 +14,7 @@ defineProps<{
 
 <template>
   <article class="book-card">
-    <BookCover :src="coverUrl" :name="name" :width="60" :height="82" />
+    <BookCover :src="coverUrl" :name="name" :author="author" :width="60" :height="82" />
     <div class="book-card__body">
       <h3 class="book-card__title">{{ name }}</h3>
       <p class="book-card__meta">

@@ -12,9 +12,12 @@
   --border-subtle: #dce5df;
   --text-muted: #60716b;
   --accent: #167a69;
+  --accent-fg: #ffffff;
   --accent-soft: #e3f2ec;
   --accent-secondary: #315f8a;
   --danger: #c94e52;
+  --badge-bg: #c94e52;
+  --badge-fg: #ffffff;
   --warning: #b77a18;
   /* TabBar 的高度。WebLayout 要给它让出底部内边距，浮在它上面的东西（书架的
      多选操作条）也要按它定位 —— 两处写死同一个数字迟早会错开一处。 */
@@ -23,13 +26,17 @@
 
 :root.dark {
   --surface-raised: #1b2522;
-  --surface-sunken: #26332e;
-  --border-subtle: #35453d;
-  --text-muted: #a7bbb0;
-  --accent: #61c7aa;
-  --accent-soft: #203d34;
-  --accent-secondary: #94bde8;
+  --surface-sunken: #24322d;
+  --border-subtle: #2f4038;
+  --text-muted: #9eb3a8;
+  --accent: #52bfa0;
+  --accent-fg: #0d1e19;
+  --accent-soft: #1f3c33;
+  --accent-secondary: #8db9e6;
   --danger: #ef8588;
+  /* 深色角标选用更高饱和度的沉稳红，白字对比度 > 5.0:1（满足 WCAG AA） */
+  --badge-bg: #c94449;
+  --badge-fg: #ffffff;
   --warning: #e5b561;
 }
 

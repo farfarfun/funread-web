@@ -11,8 +11,8 @@
  *   空的，要等 `voiceschanged`。
  * - **`pause()` 在部分移动端不可靠。** 所以「暂停」实现为 `cancel()` + 记住位置，
  *   恢复时从那一段重新开始 —— 比一个点了没反应的暂停键好。
- * - **必须由用户手势触发第一次 `speak()`。** 自动播放策略会拦掉非手势触发的朗读，
- *   所以不提供「打开章节就自动朗读」。
+ * - **切换语速/音色/跳段时必须先 `cancel()`。** 否则旧 utterance 仍在播，其 `onend`
+ *   还会再触发下一段，造成双声重叠。
  */
 
 import { computed, onBeforeUnmount, readonly, ref } from "vue";
@@ -21,6 +21,8 @@ export interface SpeechVoiceOption {
   name: string;
   lang: string;
 }
+
+const STORAGE_KEY = "funread.reader.speech";
 
 const supported =
   typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
@@ -42,16 +44,43 @@ if (supported) {
 const RATE_RANGE = [0.5, 2.5] as const;
 export const SPEECH_RATE_RANGE = RATE_RANGE;
 
+function clampRate(value: number): number {
+  return Number.isFinite(value) ? Math.min(RATE_RANGE[1], Math.max(RATE_RANGE[0], value)) : 1;
+}
+
+function loadPrefs(): { rate: number; voiceName: string } {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { rate: 1, voiceName: "" };
+    const parsed = JSON.parse(raw) as { rate?: unknown; voiceName?: unknown };
+    return {
+      rate: clampRate(Number(parsed.rate)),
+      voiceName: typeof parsed.voiceName === "string" ? parsed.voiceName : "",
+    };
+  } catch {
+    return { rate: 1, voiceName: "" };
+  }
+}
+
+function savePrefs(rate: number, voiceName: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ rate, voiceName }));
+  } catch {
+    //  隐私模式写不了，本次会话内仍生效
+  }
+}
+
 export function useSpeech() {
+  const initial = loadPrefs();
   const speaking = ref(false);
   /** 正在读第几段。-1 = 没在读。 */
   const index = ref(-1);
-  const rate = ref(1);
-  const voiceName = ref("");
+  const rate = ref(initial.rate);
+  const voiceName = ref(initial.voiceName);
 
   let queue: string[] = [];
   let current: SpeechSynthesisUtterance | null = null;
-  /** 主动停止时要抑制 onend 的续读，否则 cancel() 会触发下一段 */
+  /** 主动停止/重播时抑制旧 utterance 的 onend，避免 cancel() 串台触发下一段 */
   let aborting = false;
 
   /** 中文音色优先排前面 —— 读中文小说时它们才是有用的那批。 */
@@ -74,6 +103,13 @@ export function useSpeech() {
     return voices.value.find((voice) => voice.lang.toLowerCase().startsWith("zh"));
   }
 
+  function cancelSilently() {
+    aborting = true;
+    window.speechSynthesis.cancel();
+    aborting = false;
+    current = null;
+  }
+
   function speakAt(position: number) {
     if (!supported || position < 0 || position >= queue.length) {
       stop();
@@ -91,11 +127,11 @@ export function useSpeech() {
       utterance.lang = "zh-CN";
     }
     utterance.onend = () => {
-      if (aborting) return;
+      if (aborting || current !== utterance) return;
       speakAt(position + 1);
     };
     utterance.onerror = () => {
-      if (aborting) return;
+      if (aborting || current !== utterance) return;
       //  单段失败就跳过，不要整段停下来 —— 常见原因是某段里有引擎处理不了的字符
       speakAt(position + 1);
     };
@@ -113,21 +149,16 @@ export function useSpeech() {
     if (!supported) return false;
     queue = paragraphs.filter((line) => line.trim());
     if (!queue.length) return false;
-    aborting = true;
-    window.speechSynthesis.cancel();
-    aborting = false;
+    cancelSilently();
     speakAt(Math.min(Math.max(0, from), queue.length - 1));
     return true;
   }
 
   function stop() {
     if (!supported) return;
-    aborting = true;
-    window.speechSynthesis.cancel();
-    aborting = false;
+    cancelSilently();
     speaking.value = false;
     index.value = -1;
-    current = null;
   }
 
   /**
@@ -136,30 +167,32 @@ export function useSpeech() {
    */
   function pause() {
     if (!supported || !speaking.value) return;
-    aborting = true;
-    window.speechSynthesis.cancel();
-    aborting = false;
+    cancelSilently();
     speaking.value = false;
   }
 
   function resume() {
     if (!supported || index.value < 0) return;
+    cancelSilently();
     speakAt(index.value);
   }
 
   function skip(delta: number) {
     if (!supported || index.value < 0) return;
+    cancelSilently();
     speakAt(index.value + delta);
   }
 
   /** 改语速要重新发起当前段 —— 已经在队列里的 utterance 改不了 rate。 */
   function setRate(value: number) {
-    rate.value = Math.min(RATE_RANGE[1], Math.max(RATE_RANGE[0], value));
+    rate.value = clampRate(value);
+    savePrefs(rate.value, voiceName.value);
     if (speaking.value) resume();
   }
 
   function setVoice(name: string) {
     voiceName.value = name;
+    savePrefs(rate.value, voiceName.value);
     if (speaking.value) resume();
   }
 

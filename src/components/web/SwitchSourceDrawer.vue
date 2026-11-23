@@ -238,7 +238,7 @@ const emptyReason = computed(() => {
 }
 
 .row__meta--warn {
-  color: #f0a020;
+  color: var(--warning);
 }
 
 .row__chapter {

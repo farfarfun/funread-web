@@ -1,13 +1,16 @@
 <script setup lang="ts">
 /** 订阅文章列表里的一条。已读的整体压暗 —— 这是列表里最需要一眼分清的状态。 */
 import { MusicalNotesOutline, StarOutline, Star, VideocamOutline } from "@vicons/ionicons5";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 import type { RssArticle } from "../../api/types";
 import { formatFeedDate, plainText } from "../../utils/display";
 
 const props = defineProps<{ article: RssArticle }>();
 const emit = defineEmits<{ favorite: [article: RssArticle] }>();
+
+const imageFailed = ref(false);
+watch(() => props.article.image, () => (imageFailed.value = false));
 
 //  源站的 description 多半是 HTML，不去标签的话卡片上显示的是 `<a href="…`。
 const summary = computed(() => plainText(props.article.description));
@@ -56,13 +59,14 @@ const mediaKind = computed<"audio" | "video" | "">(() => {
       </p>
     </div>
     <img
-      v-if="props.article.image"
+      v-if="props.article.image && !imageFailed"
       class="article-card__image"
       :src="props.article.image"
       :alt="''"
       loading="lazy"
       decoding="async"
       referrerpolicy="no-referrer"
+      @error="imageFailed = true"
     />
     <button
       type="button"
@@ -172,6 +176,6 @@ const mediaKind = computed<"audio" | "video" | "">(() => {
 }
 
 .article-card__star[aria-pressed="true"] {
-  color: #f0a020;
+  color: var(--warning);
 }
 </style>

@@ -31,6 +31,11 @@ let loadVersion = 0;
  * 已订阅的源又会显示成可订阅，点下去撞一个「已经订阅过」的错误。
  */
 const subscribed = ref<Set<number>>(new Set());
+const failedIcons = ref<Set<number>>(new Set());
+
+function markIconFailed(urlId: number) {
+  failedIcons.value = new Set(failedIcons.value).add(urlId);
+}
 
 async function load(reset = true) {
   if (!reset && loadingMore.value) return;
@@ -67,7 +72,9 @@ async function load(reset = true) {
 async function loadSubscribed() {
   try {
     const subs = await api.subscriptions();
-    subscribed.value = new Set(subs.map((item) => item.url_id));
+    subscribed.value = new Set(
+      subs.filter((item) => item.kind === "legado" && item.url_id > 0).map((item) => item.url_id),
+    );
   } catch {
     //  未登录或网络抖动：目录照常能看，按钮退化成可点，点了会收到后端的错误。
   }
@@ -133,12 +140,13 @@ onMounted(() => {
         <n-list-item v-for="source in items" :key="source.url_id">
           <div class="source">
             <img
-              v-if="source.icon"
+              v-if="source.icon && !failedIcons.has(source.url_id)"
               class="source__icon"
               :src="source.icon"
               alt=""
               loading="lazy"
               referrerpolicy="no-referrer"
+              @error="markIconFailed(source.url_id)"
             />
             <span v-else class="source__icon source__icon--text">
               {{ source.name.slice(0, 1) || "源" }}

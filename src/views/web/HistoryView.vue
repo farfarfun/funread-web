@@ -14,19 +14,29 @@ import { api } from "../../api/client";
 import type { RssHistoryItem } from "../../api/types";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
-import { fromNow } from "../../utils/display";
+import { fromNow, safeExternalUrl } from "../../utils/display";
 
 const router = useRouter();
 
 const items = ref<RssHistoryItem[]>([]);
+const failedImages = ref<Set<string>>(new Set());
 const loading = ref(true);
 const error = ref("");
+
+function itemKey(item: RssHistoryItem): string {
+  return `${item.sub_id}-${item.article_key}`;
+}
+
+function markImageFailed(item: RssHistoryItem) {
+  failedImages.value = new Set(failedImages.value).add(itemKey(item));
+}
 
 async function load() {
   loading.value = true;
   error.value = "";
   try {
     items.value = await api.history();
+    failedImages.value = new Set();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
@@ -74,20 +84,22 @@ onActivated(load);
             </p>
           </div>
           <img
-            v-if="item.image"
+            v-if="item.image && !failedImages.has(itemKey(item))"
             class="row__image"
             :src="item.image"
             alt=""
             loading="lazy"
             referrerpolicy="no-referrer"
+            @error="markImageFailed(item)"
           />
         </div>
         <template #suffix>
           <n-button
+            v-if="safeExternalUrl(item.link)"
             quaternary
             size="small"
             tag="a"
-            :href="item.link"
+            :href="safeExternalUrl(item.link)"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="在浏览器里打开"
@@ -139,7 +151,7 @@ onActivated(load);
 }
 
 .row__fav {
-  color: #f0a020;
+  color: var(--warning);
 }
 
 .row__image {

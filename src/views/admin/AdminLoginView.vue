@@ -38,7 +38,7 @@ onMounted(() => auth.ensure());
       <p class="gate__subtitle">
         当前登录的是<strong>{{ username || "未知账号" }}</strong
         >，它是访客账号，进不了采集源管理。<br />
-        找一位管理员在「人员管理」里把这个账号提成管理员即可。
+        {{ auth.oidcEnabled.value ? "请使用统一管理员账号登录。" : "找一位管理员在「人员管理」里把这个账号提成管理员即可。" }}
       </p>
 
       <n-button type="primary" block size="large" @click="toReader">回到阅读端</n-button>
@@ -46,7 +46,7 @@ onMounted(() => auth.ensure());
         换个账号登录
       </n-button>
 
-      <p class="gate__hint">
+      <p v-if="!auth.oidcEnabled.value" class="gate__hint">
         一个管理员都没有时，可以在服务器上执行
         <code>funread-api accounts create-admin &lt;用户名&gt;</code> 建一个。
       </p>
@@ -64,7 +64,12 @@ onMounted(() => auth.ensure());
 }
 
 .gate__card {
-  width: min(100%, 360px);
+  width: min(100%, 380px);
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
 }
 
 .gate__title {

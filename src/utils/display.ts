@@ -5,21 +5,41 @@ export const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
   rss: "RSS 源",
 };
 
+//  模块级复用 Intl 格式化器，避免列表/表格每次渲染都重新构造 locale 对象
+const DATE_TIME_FMT = new Intl.DateTimeFormat("zh-CN", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+const SHORT_DATE_FMT = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short" });
+const RELATIVE_FMT = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
+
+/** 仅允许安全的 http(s) 外部链接，拦截 `javascript:` / `data:` 等危险协议。 */
+export function safeExternalUrl(raw: string | null | undefined): string {
+  const value = (raw || "").trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+/** 仅允许站内相对跳转路径，拦截 `//evil.com` 或外链开放重定向。 */
+export function safeInternalNext(raw: unknown, fallback = "/web"): string {
+  const text = String(raw || "").trim();
+  return text.startsWith("/") && !text.startsWith("//") ? text : fallback;
+}
+
 export function formatTime(value: string | null): string {
   if (!value) return "从未";
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return value;
+  return DATE_TIME_FMT.format(time);
 }
 
 /**
- * feed 里的时间。和 `formatTime` 不是一回事：这里的值来自源站，RSS 给的是
- * RFC-822（`Sat, 10 Oct 2026 00:37:07 +0000`）、Atom 给 ISO-8601，还有一大票
- * 自造格式。**不能直接丢给 `fromNow`** —— 解析失败时 `RelativeTimeFormat`
- * 会拿 NaN 抛 RangeError，整张列表跟着白掉。
- *
- * 解析不出来就原样回显：一串看不懂的时间，总好过一条报错或者一片空白。
+ * feed 里的时间。解析失败时原样回显，不让非法时间字符串把整张列表炸白。
  */
 export function formatFeedDate(value: string | null): string {
   const raw = (value || "").trim();
@@ -27,21 +47,12 @@ export function formatFeedDate(value: string | null): string {
   const time = new Date(raw).getTime();
   if (Number.isNaN(time)) return raw;
   //  一周内用相对时间（手机上一行就一个短词），再往前用日期。
-  //  原始的 RFC-822 串有 29 个字符，在 320px 宽的卡片上要吃掉整行。
   if (Math.abs(Date.now() - time) < 7 * 86_400_000) return fromNow(raw);
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "short" }).format(time);
+  return SHORT_DATE_FMT.format(time);
 }
 
 /**
  * 取 HTML 里的纯文字，用来做列表里的摘要。
- *
- * feed 的 `description` 常常是一段 HTML（Hacker News 给的就是
- * `<a href="...">Comments</a>`）。直接 `{{ }}` 插出来，用户看到的是一行
- * `<a href="https://...` 的尖括号。这里不走 `v-html`（那要整套白名单消毒，
- * 见 RssArticleView），只要文字。
- *
- * 用 `<template>` 的 content 解析：游离片段不会触发资源加载，也不会执行脚本，
- * 顺带把 `&amp;` 这类实体解开 —— 手写正则两件事都做不到。
  */
 export function plainText(html: string | null): string {
   const raw = (html || "").trim();
@@ -53,15 +64,16 @@ export function plainText(html: string | null): string {
 
 export function fromNow(value: string | null): string {
   if (!value) return "从未";
-  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return value;
+  const seconds = Math.round((time - Date.now()) / 1000);
   const ranges: [number, Intl.RelativeTimeFormatUnit][] = [
     [86_400, "day"],
     [3_600, "hour"],
     [60, "minute"],
   ];
-  const formatter = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
   for (const [size, unit] of ranges) {
-    if (Math.abs(seconds) >= size) return formatter.format(Math.round(seconds / size), unit);
+    if (Math.abs(seconds) >= size) return RELATIVE_FMT.format(Math.round(seconds / size), unit);
   }
-  return formatter.format(seconds, "second");
+  return RELATIVE_FMT.format(seconds, "second");
 }

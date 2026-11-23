@@ -8,12 +8,12 @@
  */
 import { computed } from "vue";
 
+import { safeExternalUrl } from "../../utils/display";
+
 const props = defineProps<{ url: string; type: string; poster?: string }>();
 
-const safeUrl = computed(() => {
-  const trimmed = (props.url || "").trim();
-  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
-});
+const safeUrl = computed(() => safeExternalUrl(props.url));
+const safePoster = computed(() => safeExternalUrl(props.poster));
 
 /** MIME 大类缺失时按后缀猜；猜不出按音频，播客里无类型的 enclosure 多是 mp3。 */
 const kind = computed<"audio" | "video">(() => {
@@ -30,7 +30,7 @@ const kind = computed<"audio" | "video">(() => {
       v-if="kind === 'video'"
       class="media__video"
       :src="safeUrl"
-      :poster="props.poster || undefined"
+      :poster="safePoster || undefined"
       controls
       preload="metadata"
       playsinline

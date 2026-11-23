@@ -17,20 +17,30 @@ import { api } from "../../api/client";
 import type { RssFavorite } from "../../api/types";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
-import { formatFeedDate } from "../../utils/display";
+import { formatFeedDate, safeExternalUrl } from "../../utils/display";
 
 const router = useRouter();
 const message = useMessage();
 
 const favorites = ref<RssFavorite[]>([]);
+const failedImages = ref<Set<string>>(new Set());
 const loading = ref(true);
 const error = ref("");
+
+function itemKey(item: RssFavorite): string {
+  return `${item.sub_id}-${item.article_key}`;
+}
+
+function markImageFailed(item: RssFavorite) {
+  failedImages.value = new Set(failedImages.value).add(itemKey(item));
+}
 
 async function load() {
   loading.value = true;
   error.value = "";
   try {
     favorites.value = await api.favorites();
+    failedImages.value = new Set();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
@@ -91,21 +101,23 @@ onActivated(load);
             </p>
           </div>
           <img
-            v-if="item.image"
+            v-if="item.image && !failedImages.has(itemKey(item))"
             class="row__image"
             :src="item.image"
             alt=""
             loading="lazy"
             referrerpolicy="no-referrer"
+            @error="markImageFailed(item)"
           />
         </div>
         <template #suffix>
           <div class="actions">
             <n-button
+              v-if="safeExternalUrl(item.link)"
               quaternary
               size="small"
               tag="a"
-              :href="item.link"
+              :href="safeExternalUrl(item.link)"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="在浏览器里打开"
