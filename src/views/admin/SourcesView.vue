@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * 采集源管理：统一采用 Naive UI `NDataTable` + 服务端分页/排序/筛选，与候选源池保持一致。
+ */
 import {
   AddOutline,
   CloudUploadOutline,
@@ -6,18 +9,42 @@ import {
   RefreshOutline,
   SearchOutline,
 } from "@vicons/ionicons5";
-import type { DropdownOption } from "naive-ui";
-import { useDialog, useMessage } from "naive-ui";
-import { computed, onMounted, ref, watch } from "vue";
+import type { DataTableColumns, DataTableSortState, DropdownOption } from "naive-ui";
+import {
+  NButton,
+  NDropdown,
+  NIcon,
+  NSpace,
+  NSwitch,
+  NTag,
+  NText,
+  NTooltip,
+  useDialog,
+  useMessage,
+} from "naive-ui";
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { api } from "../../api/client";
-import type { Source, SourceType } from "../../api/types";
+import type { Source, SourceSummary, SourceType } from "../../api/types";
+import { useOperationQueue } from "../../composables/useOperationQueue";
 import { formatTime, fromNow, SOURCE_TYPE_LABEL } from "../../utils/display";
 
 const message = useMessage();
 const dialog = useDialog();
+
 const sourceType = ref<SourceType | null>(null);
 const enabledFilter = ref<"true" | "false" | null>(null);
+const sourceQuery = ref("");
+const sort = ref("id_desc");
+const page = ref(1);
+const size = ref(20);
+const items = ref<Source[]>([]);
+const total = ref(0);
+const serverSummary = ref<SourceSummary | null>(null);
+const loading = ref(false);
+const error = ref<string | null>(null);
+const selectedIds = ref<number[]>([]);
+
 const enabledOptions = [
   { label: "已启用", value: "true" },
   { label: "已停用", value: "false" },
@@ -27,44 +54,44 @@ const sourceTypeOptions = Object.entries(SOURCE_TYPE_LABEL).map(([value, label])
   value,
 }));
 
-const PAGE_FETCH_SIZE = 200;
-const allSources = ref<Source[]>([]);
-const sourceQuery = ref("");
-const filteredSources = computed(() =>
-  allSources.value.filter((source) =>
-    source.url.toLowerCase().includes(sourceQuery.value.trim().toLowerCase()),
-  ),
-);
-const total = computed(() => filteredSources.value.length);
-const page = ref(1);
-const size = ref(20);
-const loading = ref(false);
-const error = ref<string | null>(null);
+const summary = computed<SourceSummary>(() => {
+  if (serverSummary.value) return serverSummary.value;
+  return {
+    total: total.value,
+    enabled: items.value.filter((s) => s.enabled).length,
+    failing: items.value.filter((s) => s.consecutive_failures > 0).length,
+    total_rules: items.value.reduce((acc, s) => acc + Math.max(0, s.source_count), 0),
+  };
+});
+
+let searchTimer: number | undefined;
+let loadVersion = 0;
 
 async function refresh(): Promise<void> {
+  const version = ++loadVersion;
   loading.value = true;
   error.value = null;
   try {
-    const collected: Source[] = [];
-    for (;;) {
-      const data = await api.listSources({
-        source_type: sourceType.value,
-        enabled: enabledFilter.value === null ? null : enabledFilter.value === "true",
-        limit: PAGE_FETCH_SIZE,
-        offset: collected.length,
-      });
-      collected.push(...data.items);
-      if (data.items.length === 0 || collected.length >= data.total) break;
-    }
-    allSources.value = collected;
-    const currentIds = new Set(collected.map((source) => source.id));
+    const data = await api.listSources({
+      source_type: sourceType.value,
+      enabled: enabledFilter.value === null ? null : enabledFilter.value === "true",
+      keyword: sourceQuery.value.trim() || null,
+      sort: sort.value,
+      limit: size.value,
+      offset: (page.value - 1) * size.value,
+    });
+    if (version !== loadVersion) return;
+    items.value = data.items;
+    total.value = data.total;
+    serverSummary.value = data.summary ?? null;
+    const currentIds = new Set(data.items.map((source) => source.id));
     selectedIds.value = selectedIds.value.filter((id) => currentIds.has(id));
-    page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / size.value)));
   } catch (reason) {
+    if (version !== loadVersion) return;
     error.value = reason instanceof Error ? reason.message : String(reason);
-    allSources.value = [];
+    items.value = [];
   } finally {
-    loading.value = false;
+    if (version === loadVersion) loading.value = false;
   }
 }
 
@@ -77,91 +104,59 @@ function reload(): void {
 function setSize(next: number): void {
   size.value = next;
   page.value = 1;
+  void refresh();
+}
+
+function setPage(next: number): void {
+  page.value = next;
+  void refresh();
 }
 
 watch([sourceType, enabledFilter], reload);
-watch(sourceQuery, () => (page.value = 1));
+watch(sourceQuery, () => {
+  if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(reload, 240);
+});
 
-type SortKey =
-  | "id"
-  | "source_type"
-  | "url"
-  | "source_count"
-  | "last_queried_at"
-  | "consecutive_failures"
-  | "enabled";
+onBeforeUnmount(() => {
+  if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+});
 
-const sortKey = ref<SortKey | null>(null);
-const sortOrder = ref<"asc" | "desc">("asc");
-const sortAccessors: Record<SortKey, (source: Source) => string | number> = {
-  id: (source) => source.id,
-  source_type: (source) => source.source_type,
-  url: (source) => source.url,
-  source_count: (source) => source.source_count,
-  last_queried_at: (source) => source.last_queried_at,
-  consecutive_failures: (source) => source.consecutive_failures,
-  enabled: (source) => Number(source.enabled),
-};
-const columns: { key: SortKey; label: string; width: string }[] = [
-  { key: "id", label: "ID", width: "72px" },
-  { key: "source_type", label: "类型", width: "100px" },
-  { key: "url", label: "采集源地址", width: "auto" },
-  { key: "source_count", label: "源数量", width: "100px" },
-  { key: "last_queried_at", label: "最近采集", width: "130px" },
-  { key: "consecutive_failures", label: "状态", width: "150px" },
-  { key: "enabled", label: "启用", width: "74px" },
-];
-
-function toggleSort(key: SortKey): void {
-  if (sortKey.value === key) sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
-  else {
-    sortKey.value = key;
-    sortOrder.value = "asc";
-  }
-  page.value = 1;
+function sortOrder(key: string): "ascend" | "descend" | false {
+  return sort.value === `${key}_asc` ? "ascend" : sort.value === `${key}_desc` ? "descend" : false;
 }
 
-const sortedItems = computed(() => {
-  if (sortKey.value === null) return filteredSources.value;
-  const accessor = sortAccessors[sortKey.value];
-  const direction = sortOrder.value === "asc" ? 1 : -1;
-  return [...filteredSources.value].sort((left, right) => {
-    const a = accessor(left);
-    const b = accessor(right);
-    return a < b ? -direction : a > b ? direction : 0;
-  });
-});
+function onSorterUpdate(sorter: DataTableSortState | DataTableSortState[] | null): void {
+  const active = Array.isArray(sorter) ? sorter[0] : sorter;
+  if (!active || !active.order) {
+    sort.value = "id_desc";
+  } else {
+    sort.value = `${String(active.columnKey)}_${active.order === "ascend" ? "asc" : "desc"}`;
+  }
+  page.value = 1;
+  void refresh();
+}
 
-const pagedItems = computed(() => {
-  const start = (page.value - 1) * size.value;
-  return sortedItems.value.slice(start, start + size.value);
-});
-
-const selectedIds = ref<number[]>([]);
 const selectedSources = computed(() => {
   const ids = new Set(selectedIds.value);
-  return allSources.value.filter((source) => ids.has(source.id));
+  return items.value.filter((source) => ids.has(source.id));
 });
 const allSelected = computed(
-  () =>
-    pagedItems.value.length > 0 &&
-    pagedItems.value.every((source) => selectedIds.value.includes(source.id)),
+  () => items.value.length > 0 && items.value.every((source) => selectedIds.value.includes(source.id)),
 );
 const partlySelected = computed(
-  () =>
-    !allSelected.value && pagedItems.value.some((source) => selectedIds.value.includes(source.id)),
+  () => !allSelected.value && items.value.some((source) => selectedIds.value.includes(source.id)),
 );
 
 function toggleSelected(id: number, checked: boolean): void {
   const ids = new Set(selectedIds.value);
-  checked ? ids.add(id) : ids.delete(id);
+  if (checked) ids.add(id);
+  else ids.delete(id);
   selectedIds.value = [...ids];
 }
 
 function toggleAll(checked: boolean): void {
-  const ids = new Set(selectedIds.value);
-  for (const source of pagedItems.value) checked ? ids.add(source.id) : ids.delete(source.id);
-  selectedIds.value = [...ids];
+  selectedIds.value = checked ? items.value.map((s) => s.id) : [];
 }
 
 const showCreate = ref(false);
@@ -191,19 +186,18 @@ async function create(): Promise<void> {
 
 type OperationKind = "collect" | "enable" | "disable" | "reset-cursor" | "delete";
 
-interface OperationTask {
-  key: string;
-  label: string;
-  sourceId: number;
-  sourceLabel: string;
-  run: () => Promise<string | undefined>;
-}
-
-const operationQueue: OperationTask[] = [];
-const pendingOperationKeys = ref(new Set<string>());
-const activeSourceIds = new Set<number>();
-const queuedOperations = ref(0);
-const runningOperations = ref(0);
+const queue = useOperationQueue({
+  concurrency: 4,
+  onSuccess: (task, detail) => {
+    message.success(`${task.resourceLabel}：${task.label}完成${detail ? `，${detail}` : ""}`);
+  },
+  onError: (task, reason) => {
+    message.error(
+      `${task.resourceLabel}：${task.label}失败，${reason instanceof Error ? reason.message : String(reason)}`,
+    );
+  },
+  onCancel: (count) => message.info(`已取消 ${count} 个等待操作`),
+});
 
 function sourceLabel(source: Source): string {
   try {
@@ -213,123 +207,72 @@ function sourceLabel(source: Source): string {
   }
 }
 
-function replaceSource(updated: Source): void {
-  const visible =
-    (sourceType.value === null || updated.source_type === sourceType.value) &&
-    (enabledFilter.value === null || updated.enabled === (enabledFilter.value === "true"));
-  if (!visible) {
-    allSources.value = allSources.value.filter((source) => source.id !== updated.id);
-    selectedIds.value = selectedIds.value.filter((id) => id !== updated.id);
-    return;
-  }
-  allSources.value = allSources.value.map((source) =>
-    source.id === updated.id ? updated : source,
-  );
-}
-
 function patchSource(id: number, patch: Partial<Source>): void {
-  const current = allSources.value.find((source) => source.id === id);
-  if (current) replaceSource({ ...current, ...patch });
+  items.value = items.value.map((source) => (source.id === id ? { ...source, ...patch } : source));
 }
 
 function hasPending(source: Source, kind: OperationKind): boolean {
-  return pendingOperationKeys.value.has(`${kind}:${source.id}`);
-}
-
-function enqueueOperation(
-  source: Source,
-  kind: OperationKind,
-  label: string,
-  run: OperationTask["run"],
-): boolean {
-  const key = `${kind}:${source.id}`;
-  if (pendingOperationKeys.value.has(key)) return false;
-  operationQueue.push({ key, label, sourceId: source.id, sourceLabel: sourceLabel(source), run });
-  pendingOperationKeys.value = new Set(pendingOperationKeys.value).add(key);
-  queuedOperations.value = operationQueue.length;
-  drainQueue();
-  return true;
-}
-
-function drainQueue(): void {
-  while (runningOperations.value < 4) {
-    const index = operationQueue.findIndex((task) => !activeSourceIds.has(task.sourceId));
-    if (index < 0) return;
-    const [task] = operationQueue.splice(index, 1);
-    if (!task) return;
-    queuedOperations.value = operationQueue.length;
-    runningOperations.value += 1;
-    activeSourceIds.add(task.sourceId);
-    void executeOperation(task);
-  }
-}
-
-function cancelQueuedOperations(): void {
-  const canceled = operationQueue.splice(0);
-  const keys = new Set(pendingOperationKeys.value);
-  for (const task of canceled) keys.delete(task.key);
-  pendingOperationKeys.value = keys;
-  queuedOperations.value = 0;
-  message.info(`已取消 ${canceled.length} 个等待操作`);
-}
-
-async function executeOperation(task: OperationTask): Promise<void> {
-  try {
-    const detail = await task.run();
-    message.success(`${task.sourceLabel}：${task.label}完成${detail ? `，${detail}` : ""}`);
-  } catch (reason) {
-    message.error(
-      `${task.sourceLabel}：${task.label}失败，${reason instanceof Error ? reason.message : String(reason)}`,
-    );
-  } finally {
-    const keys = new Set(pendingOperationKeys.value);
-    keys.delete(task.key);
-    pendingOperationKeys.value = keys;
-    activeSourceIds.delete(task.sourceId);
-    runningOperations.value -= 1;
-    drainQueue();
-  }
+  return queue.hasPending(`${kind}:${source.id}`);
 }
 
 function queueCollect(source: Source): boolean {
-  return enqueueOperation(source, "collect", "采集", async () => {
-    const report = await api.collectSource(source.id);
-    const now = new Date().toISOString();
-    if (!report.ok) {
+  return queue.enqueue({
+    key: `collect:${source.id}`,
+    label: "采集",
+    resourceId: source.id,
+    resourceLabel: sourceLabel(source),
+    run: async () => {
+      const report = await api.collectSource(source.id);
+      const now = new Date().toISOString();
+      if (!report.ok) {
+        patchSource(source.id, {
+          last_queried_at: now,
+          consecutive_failures: source.consecutive_failures + 1,
+          last_error: report.error ?? "采集失败",
+        });
+        throw new Error(report.error ?? "采集失败");
+      }
       patchSource(source.id, {
+        source_count: report.source_count,
         last_queried_at: now,
-        consecutive_failures: source.consecutive_failures + 1,
-        last_error: report.error ?? "采集失败",
+        last_success_at: now,
+        consecutive_failures: 0,
+        last_error: null,
       });
-      throw new Error(report.error ?? "采集失败");
-    }
-    patchSource(source.id, {
-      source_count: report.source_count,
-      last_queried_at: now,
-      last_success_at: now,
-      consecutive_failures: 0,
-      last_error: null,
-    });
-    return `获取 ${report.source_count} 条源`;
+      return `获取 ${report.source_count} 条源`;
+    },
   });
 }
 
 function queueToggle(source: Source, enabled: boolean): boolean {
-  return enqueueOperation(source, enabled ? "enable" : "disable", enabled ? "启用" : "停用", async () => {
-    replaceSource(await api.updateSource(source.id, enabled));
-    return undefined;
+  return queue.enqueue({
+    key: `${enabled ? "enable" : "disable"}:${source.id}`,
+    label: enabled ? "启用" : "停用",
+    resourceId: source.id,
+    resourceLabel: sourceLabel(source),
+    run: async () => {
+      const updated = await api.updateSource(source.id, enabled);
+      patchSource(source.id, updated);
+      return undefined;
+    },
   });
 }
 
 function queueResetCursor(source: Source): boolean {
-  return enqueueOperation(source, "reset-cursor", "重置刷新时间", async () => {
-    await api.resetSourceCursor(source.id);
-    patchSource(source.id, {
-      last_queried_at: "2000-01-01T00:00:00",
-      consecutive_failures: 0,
-      last_error: null,
-    });
-    return undefined;
+  return queue.enqueue({
+    key: `reset-cursor:${source.id}`,
+    label: "重置刷新时间",
+    resourceId: source.id,
+    resourceLabel: sourceLabel(source),
+    run: async () => {
+      await api.resetSourceCursor(source.id);
+      patchSource(source.id, {
+        last_queried_at: "2000-01-01T00:00:00",
+        consecutive_failures: 0,
+        last_error: null,
+      });
+      return undefined;
+    },
   });
 }
 
@@ -339,16 +282,23 @@ function confirmResetCursor(source: Source): void {
     content: `确定重置 ${sourceLabel(source)}？已有源数据不会删除，下次管线会重新采集。`,
     positiveText: "重置",
     negativeText: "取消",
-    onPositiveClick: () => queueResetCursor(source),
+    onPositiveClick: () => {
+      queueResetCursor(source);
+    },
   });
 }
 
 function queueRemove(source: Source): boolean {
-  return enqueueOperation(source, "delete", "删除", async () => {
-    await api.deleteSource(source.id);
-    allSources.value = allSources.value.filter((item) => item.id !== source.id);
-    selectedIds.value = selectedIds.value.filter((id) => id !== source.id);
-    return undefined;
+  return queue.enqueue({
+    key: `delete:${source.id}`,
+    label: "删除",
+    resourceId: source.id,
+    resourceLabel: sourceLabel(source),
+    run: async () => {
+      await api.deleteSource(source.id);
+      await refresh();
+      return undefined;
+    },
   });
 }
 
@@ -358,7 +308,9 @@ function confirmRemove(source: Source): void {
     content: `确定删除 ${sourceLabel(source)}？已生成的具体书源/RSS 源记录会保留。`,
     positiveText: "删除",
     negativeText: "取消",
-    onPositiveClick: () => queueRemove(source),
+    onPositiveClick: () => {
+      queueRemove(source);
+    },
   });
 }
 
@@ -367,7 +319,6 @@ const rowMenuOptions: DropdownOption[] = [
   { type: "divider", key: "divider" },
   { label: "删除", key: "delete" },
 ];
-const bulkMenuOptions: DropdownOption[] = rowMenuOptions;
 
 function onRowMenuSelect(key: string, source: Source): void {
   if (key === "reset-cursor") confirmResetCursor(source);
@@ -377,7 +328,7 @@ function onRowMenuSelect(key: string, source: Source): void {
 function queueSelected(action: OperationKind): void {
   let added = 0;
   for (const source of selectedSources.value) {
-    const queued =
+    const ok =
       action === "collect"
         ? queueCollect(source)
         : action === "enable"
@@ -387,7 +338,7 @@ function queueSelected(action: OperationKind): void {
             : action === "reset-cursor"
               ? queueResetCursor(source)
               : queueRemove(source);
-    added += Number(queued);
+    added += Number(ok);
   }
   message.info(added ? `已加入 ${added} 个操作` : "所选操作已在队列中");
 }
@@ -407,6 +358,145 @@ function onBulkMenuSelect(key: string): void {
   if (key === "reset-cursor" || key === "delete") confirmSelected(key);
 }
 
+const columns = computed<DataTableColumns<Source>>(() => [
+  { type: "selection", width: 44 },
+  {
+    title: "ID",
+    key: "id",
+    width: 72,
+    sorter: true,
+    sortOrder: sortOrder("id"),
+    render: (row) => h(NText, { code: true, class: "source-id" }, () => String(row.id)),
+  },
+  {
+    title: "类型",
+    key: "source_type",
+    width: 96,
+    sorter: true,
+    sortOrder: sortOrder("source_type"),
+    render: (row) =>
+      h(NTag, { size: "small", bordered: false }, () => SOURCE_TYPE_LABEL[row.source_type]),
+  },
+  {
+    title: "采集源地址",
+    key: "url",
+    minWidth: 260,
+    ellipsis: { tooltip: true },
+    sorter: true,
+    sortOrder: sortOrder("url"),
+    render: (row) =>
+      h(
+        NButton,
+        {
+          text: true,
+          tag: "a",
+          href: row.url,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          class: "source-link",
+        },
+        () => row.url,
+      ),
+  },
+  {
+    title: "源数量",
+    key: "source_count",
+    width: 96,
+    sorter: true,
+    sortOrder: sortOrder("source_count"),
+    render: (row) => (row.source_count < 0 ? "-" : row.source_count.toLocaleString()),
+  },
+  {
+    title: "最近采集",
+    key: "last_queried_at",
+    width: 120,
+    sorter: true,
+    sortOrder: sortOrder("last_queried_at"),
+    render: (row) =>
+      h(NTooltip, null, {
+        trigger: () => h("span", fromNow(row.last_queried_at)),
+        default: () => `最近成功：${formatTime(row.last_success_at)}`,
+      }),
+  },
+  {
+    title: "状态",
+    key: "consecutive_failures",
+    width: 120,
+    sorter: true,
+    sortOrder: sortOrder("consecutive_failures"),
+    render: (row) => {
+      if (row.last_error) {
+        return h(NTooltip, null, {
+          trigger: () =>
+            h(NTag, { size: "small", type: "error" }, () => `失败 ${row.consecutive_failures} 次`),
+          default: () => row.last_error,
+        });
+      }
+      if (row.last_success_at) {
+        return h(NTag, { size: "small", type: "success" }, () => "正常");
+      }
+      return h(NTag, { size: "small" }, () => "待采集");
+    },
+  },
+  {
+    title: "启用",
+    key: "enabled",
+    width: 78,
+    sorter: true,
+    sortOrder: sortOrder("enabled"),
+    render: (row) =>
+      h(NSwitch, {
+        size: "small",
+        value: row.enabled,
+        loading: hasPending(row, "enable") || hasPending(row, "disable"),
+        "aria-label": `${row.enabled ? "停用" : "启用"} ${sourceLabel(row)}`,
+        onUpdateValue: (enabled: boolean) => queueToggle(row, enabled),
+      }),
+  },
+  {
+    title: "操作",
+    key: "actions",
+    width: 116,
+    render: (row) =>
+      h(NSpace, { size: 4, wrap: false }, () => [
+        h(
+          NButton,
+          {
+            size: "tiny",
+            loading: hasPending(row, "collect"),
+            onClick: () => queueCollect(row),
+          },
+          () => "采集",
+        ),
+        h(
+          NDropdown,
+          {
+            trigger: "click",
+            options: rowMenuOptions,
+            onSelect: (key: string) => onRowMenuSelect(key, row),
+          },
+          {
+            default: () =>
+              h(
+                NButton,
+                {
+                  size: "tiny",
+                  quaternary: true,
+                  circle: true,
+                  "aria-label": `${sourceLabel(row)} 更多操作`,
+                },
+                { icon: () => h(NIcon, null, () => h(EllipsisHorizontalOutline)) },
+              ),
+          },
+        ),
+      ]),
+  },
+]);
+
+function rowClassName(row: Source): string {
+  return row.consecutive_failures > 0 ? "row-failing" : "";
+}
+
 onMounted(async () => {
   void refresh();
   try {
@@ -420,10 +510,13 @@ onMounted(async () => {
 <template>
   <section class="page">
     <n-space align="center" justify="space-between" class="head" :wrap="true">
-      <n-space align="center" :size="8">
-        <n-icon size="22" color="var(--accent)"><CloudUploadOutline /></n-icon>
-        <n-h2 class="title">采集源</n-h2>
-      </n-space>
+      <div class="head__left">
+        <n-space align="center" :size="8">
+          <n-icon size="22" color="var(--accent)"><CloudUploadOutline /></n-icon>
+          <n-h2 class="title">采集源</n-h2>
+        </n-space>
+        <p class="head__sub">管理书源与订阅源列表 URL，定时或手动拉取规则进入候选源池。</p>
+      </div>
       <n-space>
         <n-button size="small" :loading="loading" @click="refresh">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
@@ -436,31 +529,51 @@ onMounted(async () => {
       </n-space>
     </n-space>
 
+    <!-- 概览统计条，与候选源池统一视觉语言 -->
+    <div class="summary mb">
+      <div class="stat">
+        <span class="stat__value">{{ summary.total.toLocaleString() }}</span>
+        <span class="stat__label">采集源总数</span>
+      </div>
+      <div class="stat stat--good">
+        <span class="stat__value">{{ summary.enabled.toLocaleString() }}</span>
+        <span class="stat__label">已启用</span>
+      </div>
+      <div class="stat" :class="{ 'stat--bad': summary.failing > 0 }">
+        <span class="stat__value">{{ summary.failing.toLocaleString() }}</span>
+        <span class="stat__label">存在失败</span>
+      </div>
+      <div class="stat">
+        <span class="stat__value">{{ summary.total_rules.toLocaleString() }}</span>
+        <span class="stat__label">累计规则数</span>
+      </div>
+    </div>
+
     <div class="filter-row mb">
-        <n-input v-model:value="sourceQuery" clearable placeholder="搜索采集地址" class="query-filter">
-          <template #prefix><n-icon><SearchOutline /></n-icon></template>
-        </n-input>
-        <n-select
-          v-model:value="sourceType"
-          :options="sourceTypeOptions"
-          clearable
-          placeholder="全部类型"
-          class="type-filter"
-        />
-        <n-select
-          v-model:value="enabledFilter"
-          :options="enabledOptions"
-          clearable
-          placeholder="全部状态"
-          class="status-filter"
-        />
-        <n-text depth="3">{{ total }} / {{ allSources.length }} 个</n-text>
+      <n-input v-model:value="sourceQuery" clearable placeholder="搜索采集地址" class="query-filter">
+        <template #prefix><n-icon><SearchOutline /></n-icon></template>
+      </n-input>
+      <n-select
+        v-model:value="sourceType"
+        :options="sourceTypeOptions"
+        clearable
+        placeholder="全部类型"
+        class="type-filter"
+      />
+      <n-select
+        v-model:value="enabledFilter"
+        :options="enabledOptions"
+        clearable
+        placeholder="全部状态"
+        class="status-filter"
+      />
+      <n-text depth="3" class="filter-count">{{ items.length }} / {{ total }} 个</n-text>
     </div>
 
     <n-alert v-if="error" type="error" class="mb">{{ error }}</n-alert>
 
     <div
-      v-if="selectedSources.length > 0 || runningOperations + queuedOperations > 0"
+      v-if="selectedSources.length > 0 || queue.runningCount.value + queue.queuedCount.value > 0"
       class="operation-bar"
     >
       <n-space v-if="selectedSources.length > 0" align="center" :size="8" wrap>
@@ -468,7 +581,7 @@ onMounted(async () => {
         <n-button size="tiny" @click="queueSelected('collect')">采集</n-button>
         <n-button size="tiny" @click="queueSelected('enable')">启用</n-button>
         <n-button size="tiny" @click="queueSelected('disable')">停用</n-button>
-        <n-dropdown trigger="click" :options="bulkMenuOptions" @select="onBulkMenuSelect">
+        <n-dropdown trigger="click" :options="rowMenuOptions" @select="onBulkMenuSelect">
           <n-button size="tiny">
             更多
             <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
@@ -476,175 +589,92 @@ onMounted(async () => {
         </n-dropdown>
       </n-space>
       <n-space
-        v-if="runningOperations + queuedOperations > 0"
+        v-if="queue.runningCount.value + queue.queuedCount.value > 0"
         align="center"
         :size="8"
         class="queue-status"
       >
         <n-text depth="3" role="status" aria-live="polite">
-          执行中 {{ runningOperations }}，等待 {{ queuedOperations }}
+          执行中 {{ queue.runningCount.value }}，等待 {{ queue.queuedCount.value }}
         </n-text>
         <n-button
           size="tiny"
-          :disabled="queuedOperations === 0"
+          :disabled="queue.queuedCount.value === 0"
           aria-label="取消所有等待中的操作"
-          @click="cancelQueuedOperations"
+          @click="queue.cancelQueued"
         >
           取消
         </n-button>
       </n-space>
     </div>
 
-    <n-spin :show="loading" class="table-scroll">
-      <n-empty v-if="!loading && total === 0" :description="allSources.length ? '没有匹配的采集源' : '还没有采集源'" class="empty">
-        <template #extra>
-          <n-button v-if="!allSources.length" size="small" @click="showCreate = true">登记第一个</n-button>
+    <div class="table-scroll">
+      <n-data-table
+        remote
+        striped
+        size="small"
+        :loading="loading"
+        :columns="columns"
+        :data="items"
+        :row-key="(row: Source) => row.id"
+        :checked-row-keys="selectedIds"
+        :row-class-name="rowClassName"
+        class="source-table"
+        @update:checked-row-keys="(keys: Array<string | number>) => (selectedIds = keys.map(Number))"
+        @update:sorter="onSorterUpdate"
+      >
+        <template #empty>
+          <n-empty :description="summary.total ? '没有匹配的采集源' : '还没有采集源'" class="empty">
+            <template #extra>
+              <n-button v-if="!summary.total" size="small" @click="showCreate = true">登记第一个</n-button>
+            </template>
+          </n-empty>
         </template>
-      </n-empty>
+      </n-data-table>
+    </div>
 
-      <n-table v-else :single-line="false" size="small" class="source-table">
-        <thead>
-          <tr>
-            <th class="select-cell">
-              <n-checkbox
-                :checked="allSelected"
-                :indeterminate="partlySelected"
-                aria-label="选择当前页"
-                @update:checked="toggleAll"
-              />
-            </th>
-            <th
-              v-for="column in columns"
-              :key="column.key"
-              :style="{ width: column.width }"
-              :aria-sort="
-                sortKey === column.key
-                  ? sortOrder === 'asc'
-                    ? 'ascending'
-                    : 'descending'
-                  : undefined
-              "
-            >
-              <button type="button" class="sortable" @click="toggleSort(column.key)">
-                {{ column.label }}
-                <span aria-hidden="true" class="sort-arrow" :class="{ active: sortKey === column.key }">
-                  {{ sortKey === column.key && sortOrder === "desc" ? "▼" : "▲" }}
-                </span>
-              </button>
-            </th>
-            <th class="actions-column">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="source in pagedItems"
-            :key="source.id"
-            :class="{
-              'row-failing': source.consecutive_failures > 0,
-              'row-selected': selectedIds.includes(source.id),
-            }"
-          >
-            <td class="select-cell">
-              <n-checkbox
-                :checked="selectedIds.includes(source.id)"
-                :aria-label="`选择 ${sourceLabel(source)}`"
-                @update:checked="(checked: boolean) => toggleSelected(source.id, checked)"
-              />
-            </td>
-            <td><n-text code class="source-id">{{ source.id }}</n-text></td>
-            <td>{{ SOURCE_TYPE_LABEL[source.source_type] }}</td>
-            <td>
-              <n-button text tag="a" :href="source.url" target="_blank" rel="noopener noreferrer" class="source-link">
-                {{ source.url }}
-              </n-button>
-            </td>
-            <td>{{ source.source_count < 0 ? "-" : source.source_count.toLocaleString() }}</td>
-            <td>
-              <n-tooltip>
-                <template #trigger><span>{{ fromNow(source.last_queried_at) }}</span></template>
-                最近成功：{{ formatTime(source.last_success_at) }}
-              </n-tooltip>
-            </td>
-            <td>
-              <n-tooltip v-if="source.last_error">
-                <template #trigger>
-                  <n-tag size="small" type="error">失败 {{ source.consecutive_failures }} 次</n-tag>
-                </template>
-                {{ source.last_error }}
-              </n-tooltip>
-              <n-tag v-else-if="source.last_success_at" size="small" type="success">正常</n-tag>
-              <n-tag v-else size="small">待采集</n-tag>
-            </td>
-            <td>
-              <n-switch
-                size="small"
-                :value="source.enabled"
-                :loading="hasPending(source, 'enable') || hasPending(source, 'disable')"
-                :aria-label="`${source.enabled ? '停用' : '启用'} ${sourceLabel(source)}`"
-                @update:value="(enabled: boolean) => queueToggle(source, enabled)"
-              />
-            </td>
-            <td>
-              <n-space :size="4" :wrap="false">
-                <n-button
-                  size="tiny"
-                  :loading="hasPending(source, 'collect')"
-                  @click="queueCollect(source)"
-                >
-                  采集
-                </n-button>
-                <n-dropdown
-                  trigger="click"
-                  :options="rowMenuOptions"
-                  @select="(key: string) => onRowMenuSelect(key, source)"
-                >
-                  <n-button size="tiny" quaternary circle :aria-label="`${sourceLabel(source)} 更多操作`">
-                    <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
-                  </n-button>
-                </n-dropdown>
-              </n-space>
-            </td>
-          </tr>
-        </tbody>
-      </n-table>
-
-      <div v-if="!loading && pagedItems.length" class="mobile-source-list">
-        <n-checkbox :checked="allSelected" :indeterminate="partlySelected" @update:checked="toggleAll">选择当前页</n-checkbox>
-        <article v-for="source in pagedItems" :key="source.id" class="mobile-source">
-          <div class="mobile-source__head">
-            <n-checkbox
-              :checked="selectedIds.includes(source.id)"
-              :aria-label="`选择 ${sourceLabel(source)}`"
-              @update:checked="(checked: boolean) => toggleSelected(source.id, checked)"
-            />
-            <span class="mobile-source__name">{{ sourceLabel(source) }}</span>
-            <n-tag size="small" :bordered="false">{{ SOURCE_TYPE_LABEL[source.source_type] }}</n-tag>
-          </div>
-          <a class="mobile-source__url" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.url }}</a>
-          <div class="mobile-source__meta">
-            <span>{{ source.source_count < 0 ? "待采集" : `${source.source_count.toLocaleString()} 条规则` }}</span>
-            <span>{{ fromNow(source.last_queried_at) }}</span>
-            <n-tag v-if="source.last_error" size="small" type="error">失败 {{ source.consecutive_failures }} 次</n-tag>
-          </div>
-          <div class="mobile-source__actions">
-            <n-switch
-              size="small"
-              :value="source.enabled"
-              :loading="hasPending(source, 'enable') || hasPending(source, 'disable')"
-              :aria-label="`${source.enabled ? '停用' : '启用'} ${sourceLabel(source)}`"
-              @update:value="(enabled: boolean) => queueToggle(source, enabled)"
-            />
-            <span class="mobile-source__spacer" />
-            <n-button size="small" :loading="hasPending(source, 'collect')" @click="queueCollect(source)">采集</n-button>
-            <n-dropdown trigger="click" :options="rowMenuOptions" @select="(key: string) => onRowMenuSelect(key, source)">
-              <n-button size="small" quaternary circle :aria-label="`${sourceLabel(source)} 更多操作`">
-                <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
-              </n-button>
-            </n-dropdown>
-          </div>
-        </article>
-      </div>
-    </n-spin>
+    <div v-if="!loading && items.length" class="mobile-source-list">
+      <n-checkbox :checked="allSelected" :indeterminate="partlySelected" @update:checked="toggleAll">
+        选择当前页
+      </n-checkbox>
+      <article v-for="source in items" :key="source.id" class="mobile-source">
+        <div class="mobile-source__head">
+          <n-checkbox
+            :checked="selectedIds.includes(source.id)"
+            :aria-label="`选择 ${sourceLabel(source)}`"
+            @update:checked="(checked: boolean) => toggleSelected(source.id, checked)"
+          />
+          <span class="mobile-source__name">{{ sourceLabel(source) }}</span>
+          <n-tag size="small" :bordered="false">{{ SOURCE_TYPE_LABEL[source.source_type] }}</n-tag>
+        </div>
+        <a class="mobile-source__url" :href="source.url" target="_blank" rel="noopener noreferrer">
+          {{ source.url }}
+        </a>
+        <div class="mobile-source__meta">
+          <span>{{ source.source_count < 0 ? "待采集" : `${source.source_count.toLocaleString()} 条规则` }}</span>
+          <span>{{ fromNow(source.last_queried_at) }}</span>
+          <n-tag v-if="source.last_error" size="small" type="error">失败 {{ source.consecutive_failures }} 次</n-tag>
+        </div>
+        <div class="mobile-source__actions">
+          <n-switch
+            size="small"
+            :value="source.enabled"
+            :loading="hasPending(source, 'enable') || hasPending(source, 'disable')"
+            :aria-label="`${source.enabled ? '停用' : '启用'} ${sourceLabel(source)}`"
+            @update:value="(enabled: boolean) => queueToggle(source, enabled)"
+          />
+          <span class="mobile-source__spacer" />
+          <n-button size="small" :loading="hasPending(source, 'collect')" @click="queueCollect(source)">
+            采集
+          </n-button>
+          <n-dropdown trigger="click" :options="rowMenuOptions" @select="(key: string) => onRowMenuSelect(key, source)">
+            <n-button size="small" quaternary circle :aria-label="`${sourceLabel(source)} 更多操作`">
+              <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
+            </n-button>
+          </n-dropdown>
+        </div>
+      </article>
+    </div>
 
     <n-pagination
       v-if="total > size"
@@ -655,7 +685,7 @@ onMounted(async () => {
       show-quick-jumper
       show-size-picker
       :page-sizes="[10, 20, 50, 100]"
-      @update:page="page = $event"
+      @update:page="setPage"
       @update:page-size="setSize"
     />
 
@@ -690,12 +720,64 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
+.head__left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.head__sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .title {
   margin: 0;
 }
 
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.stat {
+  min-width: 0;
+  padding: 12px 16px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.stat:last-child {
+  border-right: 0;
+}
+
+.stat__value {
+  display: block;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat__label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.stat--good .stat__value {
+  color: var(--accent);
+}
+
+.stat--bad .stat__value {
+  color: var(--danger);
+}
+
 .type-filter {
-  width: 150px;
+  width: 140px;
 }
 
 .status-filter {
@@ -707,14 +789,17 @@ onMounted(async () => {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
 }
 
 .query-filter {
   flex: 1 1 230px;
   max-width: 420px;
+}
+
+.filter-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .operation-bar {
@@ -725,8 +810,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
-  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
   background: var(--accent-soft);
 }
 
@@ -736,77 +821,28 @@ onMounted(async () => {
 }
 
 .source-table {
-  min-width: 1080px;
-  table-layout: fixed;
+  min-width: 960px;
 }
 
-.source-table :deep(tbody tr:nth-child(even)) {
-  background: rgba(128, 128, 128, 0.05);
+.source-table :deep(tr.row-failing td:first-child) {
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 
-.source-table :deep(tbody tr.row-failing) {
-  box-shadow: inset 3px 0 0 #e88080;
-}
-
-.source-table :deep(tbody tr.row-selected) {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-
-.select-cell {
-  width: 44px;
-  text-align: center;
-}
-
-.actions-column {
-  width: 130px;
-}
-
-.source-id {
+:deep(.source-id) {
   font-size: 11px;
 }
 
-.source-link {
-  display: inline-block;
+:deep(.source-link) {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-
-.sortable {
-  appearance: none;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-weight: inherit;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.sortable:hover {
-  color: var(--accent);
-}
-
-.sort-arrow {
-  font-size: 10px;
-  opacity: 0.25;
-}
-
-.sort-arrow.active {
-  opacity: 1;
 }
 
 .empty {
-  padding: 48px 0;
+  padding: 36px 0;
 }
 
 .pager {
   margin-top: 20px;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .create-modal {
@@ -819,65 +855,79 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-.mobile-source-list { display: none; }
+.mobile-source-list {
+  display: none;
+}
 
 @media (max-width: 700px) {
-  .source-table { display: none; }
-  .mobile-source-list { display: grid; gap: 10px; }
+  .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat:nth-child(2) {
+    border-right: 0;
+  }
+  .stat:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .table-scroll {
+    display: none;
+  }
+  .mobile-source-list {
+    display: grid;
+    gap: 10px;
+  }
   .mobile-source {
     display: grid;
     gap: 10px;
     padding: 14px;
     background: var(--surface-raised);
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: 8px;
   }
-  .mobile-source__head, .mobile-source__meta, .mobile-source__actions {
+  .mobile-source__head,
+  .mobile-source__meta,
+  .mobile-source__actions {
     display: flex;
     gap: 10px;
     align-items: center;
   }
-  .mobile-source__name { min-width: 0; flex: 1; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-source__url { overflow-wrap: anywhere; color: var(--accent-secondary); font-size: 13px; line-height: 1.45; }
-  .mobile-source__meta { flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
-  .mobile-source__actions { padding-top: 8px; border-top: 1px solid var(--border-subtle); }
-  .mobile-source__spacer { flex: 1; }
-  .type-filter, .status-filter { flex: 1 1 calc(50% - 6px); width: auto; }
-  .query-filter { flex-basis: 100%; max-width: none; }
-}
-
-@media (pointer: coarse) {
-  .sortable {
-    min-height: 44px;
+  .mobile-source__name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-}
-
-@media (max-width: 640px) {
-  .page {
-    width: min(calc(100% - 24px), 1440px);
-    padding-top: 20px;
+  .mobile-source__url {
+    overflow-wrap: anywhere;
+    color: var(--accent-secondary);
+    font-size: 13px;
+    line-height: 1.45;
   }
-
-  .head {
-    align-items: flex-start !important;
+  .mobile-source__meta {
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-muted);
   }
-
-  .operation-bar {
-    align-items: flex-start;
-    flex-direction: column;
+  .mobile-source__actions {
+    padding-top: 8px;
+    border-top: 1px solid var(--border-subtle);
   }
-
+  .mobile-source__spacer {
+    flex: 1;
+  }
   .type-filter,
   .status-filter {
-    width: 100%;
+    flex: 1 1 calc(50% - 6px);
+    width: auto;
   }
-
-  .filter-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  .query-filter {
+    flex-basis: 100%;
+    max-width: none;
   }
-
-  .filter-row > :last-child {
-    grid-column: 1 / -1;
+  .filter-count {
+    margin-left: 0;
   }
 }
 </style>

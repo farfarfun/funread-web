@@ -6,13 +6,13 @@
  * - `meta.immersive`（正文、文章）—— 全屏阅读，工具栏由页面自己控制；
  * - `meta.bare`（登录、注册）—— 还没有身份，底部导航点进去全是 401。
  */
-import type { GlobalThemeOverrides } from "naive-ui";
 import { darkTheme, dateZhCN, zhCN } from "naive-ui";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import SideRail from "../components/web/SideRail.vue";
 import TabBar from "../components/web/TabBar.vue";
+import { useNaiveThemeOverrides } from "../composables/useNaiveTheme";
 import { useTheme } from "../composables/useTheme";
 import { useViewport } from "../composables/useViewport";
 
@@ -20,27 +20,13 @@ const route = useRoute();
 const { dark } = useTheme();
 const { isWide } = useViewport();
 const theme = computed(() => (dark.value ? darkTheme : null));
+const themeOverrides = useNaiveThemeOverrides(dark);
 const showNav = computed(() => !route.meta.immersive && !route.meta.bare);
 //  宽屏走侧栏、窄屏走底栏。两者互斥 —— 同时出现会占掉两边的空间。
 const showRail = computed(() => showNav.value && isWide.value);
 const showTabs = computed(() => showNav.value && !isWide.value);
 
-const primary = "#167A69";
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: primary,
-    primaryColorHover: "#1B927E",
-    primaryColorPressed: "#116557",
-    primaryColorSuppl: "rgba(22, 122, 105, 0.14)",
-    borderRadius: "8px",
-    borderRadiusSmall: "6px",
-    fontFamily:
-      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
-  },
-  Card: { borderRadius: "8px" },
-  Button: { borderRadiusMedium: "8px", borderRadiusSmall: "6px", borderRadiusTiny: "6px" },
-  Input: { borderRadius: "8px" },
-};
+const KEEP_ALIVE_VIEWS = ["ShelfView", "ExploreView", "RssView", "SearchView"];
 </script>
 
 <template>
@@ -56,7 +42,11 @@ const themeOverrides: GlobalThemeOverrides = {
         <div class="web-frame" :class="{ 'web-frame--rail': showRail }">
           <SideRail v-if="showRail" />
           <div class="web-shell" :class="{ 'web-shell--tabs': showTabs }">
-            <RouterView />
+            <RouterView v-slot="{ Component }">
+              <KeepAlive :include="KEEP_ALIVE_VIEWS">
+                <component :is="Component" />
+              </KeepAlive>
+            </RouterView>
           </div>
         </div>
         <TabBar v-if="showTabs" />

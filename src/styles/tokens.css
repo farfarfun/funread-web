@@ -11,6 +11,7 @@
 }
 
 :root.dark {
+  --focus-ring: #52bfa0;
   --bg-canvas: #121a18;
 }
 
@@ -38,6 +39,8 @@ body {
   min-width: 320px;
   background: var(--bg-canvas);
   letter-spacing: 0;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {

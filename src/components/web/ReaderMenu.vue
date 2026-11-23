@@ -3,26 +3,14 @@
  * 正文页的菜单层。结构对齐 CCSSNE/legado 的 `view_read_menu.xml`：
  *
  * ```
- * 顶栏  当前章节名 · 书源（可点 → 换源）
- * 侧边  亮度滑块
- * 底部  [上一章] ——— 全书进度滑块 ——— [下一章]
- *       目录 | 朗读 | 界面 | 设置      ← 带文字，不是纯图标
+ * 顶栏  [←] 当前章节名 · 书源（可点 → 换源）
+ * 底部  亮度滑块
+ *       [上一章] ——— 全书进度滑块（松手提交，防高频发包） ——— [下一章]
+ *       目录 | 朗读 | 界面 | 设置
  * ```
- *
- * 和原来那一行五个纯图标按钮比，三处是实质改进：
- *
- * - **全书进度滑块。** 上千章的书里跳转，拖滑块比翻目录快得多 —— 这是原版这一屏
- *   最实用的一项。
- * - **按钮带文字。** 纯图标要靠猜，而「界面」和「设置」这两个图标很难区分。
- * - **顶栏显示当前源。** 读到一半发现内容不对时，第一个要看的就是「我在读哪个
- *   源」，而那之前要翻两层才知道。
- *
- * 亮度是**遮罩模拟**：Web 没有屏幕亮度 API。只能压暗，不能调亮 —— 所以滑块的
- * 100% 是「不压暗」，而不是「最亮」。这个限制在界面上说明了，不然用户会以为坏了。
  */
 import {
   ChevronBackOutline,
-  ChevronForwardOutline,
   ColorPaletteOutline,
   ListOutline,
   PauseOutline,
@@ -30,10 +18,10 @@ import {
   SunnyOutline,
   VolumeHighOutline,
 } from "@vicons/ionicons5";
-import { computed } from "vue";
+import { ref, watch } from "vue";
 
 const show = defineModel<boolean>("show", { required: true });
-/** 0-100。100 = 不压暗。见上面关于「只能压暗」的说明。 */
+/** 20-100。100 = 不压暗。 */
 const brightness = defineModel<number>("brightness", { required: true });
 
 const props = defineProps<{
@@ -48,6 +36,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  back: [];
   prev: [];
   next: [];
   jump: [index: number];
@@ -58,11 +47,35 @@ const emit = defineEmits<{
   switchSource: [];
 }>();
 
-/** 滑块用 1-based —— 用户看到的「第 N 章」和它一致，省掉一次心算。 */
-const position = computed({
-  get: () => props.index + 1,
-  set: (value) => emit("jump", Math.round(value) - 1),
-});
+/** 拖动滑块时只改本地预览值，松手后再真正发起切章请求，避免拖动触发几十次拉章。 */
+const draftPosition = ref(props.index + 1);
+let commitTimer: number | undefined;
+
+watch(
+  () => props.index,
+  (val) => {
+    draftPosition.value = val + 1;
+  },
+);
+
+function onSliderUpdate(value: number) {
+  draftPosition.value = Math.round(value);
+  if (commitTimer !== undefined) window.clearTimeout(commitTimer);
+  //  点击轨道（非拖动）不会触发 dragend，用短防抖兜底；拖动过程中持续重置不会早发。
+  commitTimer = window.setTimeout(() => {
+    commitTimer = undefined;
+    commitPosition();
+  }, 240);
+}
+
+function commitPosition() {
+  if (commitTimer !== undefined) {
+    window.clearTimeout(commitTimer);
+    commitTimer = undefined;
+  }
+  const target = Math.max(0, Math.round(draftPosition.value) - 1);
+  if (target !== props.index) emit("jump", target);
+}
 </script>
 
 <template>
@@ -70,26 +83,29 @@ const position = computed({
   <div
     v-if="brightness < 100"
     class="dimmer"
-    :style="{ opacity: String((100 - brightness) / 100 * 0.75) }"
+    :style="{ opacity: String(((100 - brightness) / 100) * 0.75) }"
     aria-hidden="true"
   />
 
   <Transition name="fade">
     <div v-if="show" class="top" @click.stop>
-      <p class="top__chapter">{{ chapterName || "—" }}</p>
-      <div class="top__meta">
-        <span class="top__position">{{ index + 1 }} / {{ total }}</span>
-        <button type="button" class="top__source" @click="emit('switchSource')">
-          {{ sourceName || "未知来源" }} · 换源
-        </button>
+      <button type="button" class="top__back" aria-label="返回" title="返回" @click="emit('back')">
+        <n-icon size="22"><ChevronBackOutline /></n-icon>
+      </button>
+      <div class="top__body">
+        <p class="top__chapter">{{ chapterName || "—" }}</p>
+        <div class="top__meta">
+          <span class="top__position">{{ index + 1 }} / {{ total }}</span>
+          <button type="button" class="top__source" @click="emit('switchSource')">
+            {{ sourceName || "未知来源" }} · 换源
+          </button>
+        </div>
       </div>
     </div>
   </Transition>
 
   <Transition name="slide-up">
     <div v-if="show" class="menu" @click.stop>
-      <!-- 亮度：原版是侧边竖滑块，这里放进菜单里 —— 竖滑块在 Web 上没有原生
-           控件，自己做一个纵向拖拽的收益不抵成本 -->
       <div class="menu__brightness">
         <n-icon size="16"><SunnyOutline /></n-icon>
         <n-slider v-model:value="brightness" :min="20" :max="100" :step="5" />
@@ -102,13 +118,15 @@ const position = computed({
           上一章
         </n-button>
         <n-slider
-          v-model:value="position"
+          :value="draftPosition"
           :min="1"
           :max="Math.max(1, total)"
           :step="1"
           :tooltip="true"
           :format-tooltip="(value: number) => `第 ${value} 章`"
           class="menu__slider"
+          @update:value="onSliderUpdate"
+          @dragend="commitPosition"
         />
         <n-button quaternary size="small" :disabled="!hasNext" @click="emit('next')">
           下一章
@@ -162,14 +180,44 @@ const position = computed({
   inset-inline: 0;
   top: 0;
   z-index: 30;
-  padding: calc(env(safe-area-inset-top, 0px) + var(--space-3)) var(--space-4) var(--space-3);
-  background: var(--surface-raised);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: calc(env(safe-area-inset-top, 0px) + var(--space-2)) var(--space-4) var(--space-2);
+  /* 半透明底色配合 blur 才能呈现真实毛玻璃质感 */
+  background: color-mix(in srgb, var(--surface-raised) 86%, transparent);
   border-bottom: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.top__back {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -8px;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.top__back:active {
+  background: var(--surface-sunken);
+}
+
+.top__body {
+  min-width: 0;
+  flex: 1;
 }
 
 .top__chapter {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   overflow: hidden;
   font-size: 15px;
   font-weight: 600;
@@ -200,9 +248,10 @@ const position = computed({
   bottom: 0;
   z-index: 30;
   padding: var(--space-3) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   border-top: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .menu__brightness {

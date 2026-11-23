@@ -197,6 +197,9 @@ router.beforeEach(async (to) => {
     return { name: "packaged-setup", query: { next: to.fullPath } };
   }
 
+  if (to.name === "register" && (await useAuth().ensure())?.oidc_enabled) {
+    return { name: "login", query: to.query };
+  }
   if (to.meta.public) return true;
 
   const auth = useAuth();

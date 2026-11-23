@@ -62,6 +62,9 @@ pnpm dev
 **打包版**把 `dist` 装进 app，于是请求用户服务器成了跨站，cookie 发不出去
 （后端 `allow_credentials=False`）。它改用设备 token：首次启动填地址 + 账号口令，
 换一条长期凭据存在本机；「我的 → 我的设备」能看到所有设备并单条吊销。
+启用 Casdoor 后，在浏览器登录 Funread，进入「我的设备」创建凭据；打包版连接页
+选择「统一账号」并录入该凭据。浏览器与 light 版直接使用 Casdoor 登录页。
+Casdoor Application 和 API 配置见 [funread-api 文档](https://github.com/farfarfun/funread-api#casdoor-单点登录)。
 
 ```bash
 cd mobile && npm install && npm run sync                    # light

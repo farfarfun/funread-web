@@ -12,7 +12,7 @@ import { computed, ref, watch } from "vue";
 
 const STORAGE_KEY = "funread.reader.settings";
 
-export type ReaderTheme = "paper" | "night" | "sepia" | "green";
+export type ReaderTheme = "paper" | "sepia" | "green" | "night" | "amoled";
 
 /** 正文字体。只给系统字体栈 —— 下载字体要几 MB，而中文字体更大。 */
 export type ReaderFont = "system" | "serif" | "sans" | "kai";
@@ -58,17 +58,19 @@ export const AUTO_SCROLL_RANGE = [10, 160] as const;
 
 export const THEME_LABEL: Record<ReaderTheme, string> = {
   paper: "纸白",
-  night: "夜间",
-  sepia: "护眼",
+  sepia: "羊皮",
   green: "豆绿",
+  night: "夜间",
+  amoled: "纯黑",
 };
 
 /** 正文配色。和 Naive UI 的全局主题分开 —— 读正文时底色该由读者定。 */
 export const THEME_COLORS: Record<ReaderTheme, { bg: string; fg: string; muted: string }> = {
-  paper: { bg: "#f7f6f3", fg: "#1f2023", muted: "#6b6d73" },
-  night: { bg: "#15161a", fg: "#c8cad0", muted: "#7a7d85" },
-  sepia: { bg: "#efe3cd", fg: "#4a3a28", muted: "#897259" },
-  green: { bg: "#cce8cf", fg: "#2b3a2d", muted: "#5d6f5f" },
+  paper: { bg: "#f7f5f0", fg: "#232220", muted: "#75726b" },
+  sepia: { bg: "#f2e7d3", fg: "#463726", muted: "#8a735a" },
+  green: { bg: "#d5e8d7", fg: "#273729", muted: "#586d5b" },
+  night: { bg: "#151a18", fg: "#cbd4cf", muted: "#7c8d84" },
+  amoled: { bg: "#000000", fg: "#b8c0bc", muted: "#6c7570" },
 };
 
 export const FONT_LABEL: Record<ReaderFont, string> = {

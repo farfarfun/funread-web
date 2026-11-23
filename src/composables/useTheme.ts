@@ -9,7 +9,12 @@ import { computed, ref, watchEffect } from "vue";
 
 const STORAGE_KEY = "funread.theme";
 
-const stored = localStorage.getItem(STORAGE_KEY);
+let stored: string | null = null;
+try {
+  stored = localStorage.getItem(STORAGE_KEY);
+} catch {
+  //  隐私模式下读不了，回落到默认主题
+}
 //  默认深色：这是个夜里会用的阅读应用。
 const dark = ref(stored ? stored === "dark" : true);
 

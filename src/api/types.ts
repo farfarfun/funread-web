@@ -18,11 +18,19 @@ export interface Source {
   updated_at: string;
 }
 
+export interface SourceSummary {
+  total: number;
+  enabled: number;
+  failing: number;
+  total_rules: number;
+}
+
 export interface SourcePage {
   items: Source[];
   total: number;
   limit: number;
   offset: number;
+  summary?: SourceSummary;
 }
 
 export interface CollectReport {
@@ -150,6 +158,7 @@ export interface ScanReport {
 // ---------------------------------------------------------------- 账户
 
 export interface SessionState {
+  oidc_enabled: boolean;
   auth_required: boolean;
   admin: boolean;
   reader_public: boolean;
@@ -200,6 +209,10 @@ export interface DeviceToken {
 /** 签发响应（`POST /auth/tokens/issue`）。比列表多一个**只出现这一次**的明文。 */
 export interface DeviceTokenCreated extends DeviceToken {
   token: string;
+}
+
+export interface CurrentDeviceToken extends DeviceToken {
+  username: string;
 }
 
 // ---------------------------------------------------------------- 小说
@@ -477,7 +490,7 @@ export interface RssArticlePage {
   /** 回传给 `next_url` 取下一页。空串 = 没有了。 */
   next_url: string;
   category: string;
-  /** false 表示这个源没有正文规则，界面该外跳浏览器而不是给空白阅读器。 */
+  /** false 表示正文页只显示文章信息和原文入口。 */
   has_content: boolean;
 }
 

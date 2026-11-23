@@ -61,17 +61,23 @@ export function useAuth() {
     state.value = await api.me().catch(() => null);
   }
 
+  function clear() {
+    state.value = null;
+  }
+
   return {
     state: readonly(state),
     loading: readonly(loading),
     authenticated: computed(() => Boolean(state.value?.authenticated)),
     isAdmin: computed(() => Boolean(state.value?.admin)),
+    oidcEnabled: computed(() => Boolean(state.value?.oidc_enabled)),
     /** 还没有任何账号。用于「首次运行」的注册引导。 */
     isLocal: computed(() => Boolean(state.value?.local)),
     registerOpen: computed(() => Boolean(state.value?.register_open)),
     username: computed(() => state.value?.username ?? ""),
     ensure,
     refresh,
+    clear,
     login,
     register,
     adminLogin,
