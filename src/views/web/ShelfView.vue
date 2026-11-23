@@ -30,6 +30,9 @@ import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useAuth } from "../../composables/useAuth";
 import { useShortcuts } from "../../composables/useShortcuts";
+import { clearBook } from "../../utils/offline";
+
+defineOptions({ name: "ShelfView" });
 
 type ViewMode = "grid" | "list";
 type SortKey = "recent" | "name";
@@ -52,12 +55,20 @@ const router = useRouter();
 const message = useMessage();
 const auth = useAuth();
 
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 const books = ref<ShelfBook[]>([]);
 const groups = ref<ShelfGroup[]>([]);
 const loading = ref(true);
 const error = ref("");
-const mode = ref<ViewMode>((localStorage.getItem(VIEW_KEY) as ViewMode) || "grid");
-const sort = ref<SortKey>(localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent");
+const mode = ref<ViewMode>((readStorage(VIEW_KEY) as ViewMode) || "grid");
+const sort = ref<SortKey>(readStorage(SORT_KEY) === "name" ? "name" : "recent");
 
 //  `null` = 全部，`""` = 未分组，其余 = 组名。三态，所以不能用空串兼表「全部」。
 const activeGroup = ref<string | null>(readActiveGroup());
@@ -67,6 +78,8 @@ const selected = ref<Set<string>>(new Set());
 const moving = ref(false);
 const moveTarget = ref("");
 const newGroup = ref("");
+const renaming = ref(false);
+const renameValue = ref("");
 
 const checking = ref(false);
 const checked = ref(0);
@@ -79,7 +92,7 @@ const SORT_OPTIONS = [
 ];
 
 function readActiveGroup(): string | null {
-  const raw = localStorage.getItem(GROUP_KEY);
+  const raw = readStorage(GROUP_KEY);
   //  存的是 JSON 而不是裸字符串 —— 否则 `""`（未分组）和「没存过」分不开。
   if (raw === null) return null;
   try {
@@ -121,7 +134,8 @@ const editableGroup = computed(() =>
   activeGroup.value !== null && activeGroup.value !== "" ? activeGroup.value : "",
 );
 
-const unreadTotal = computed(() => books.value.reduce((sum, book) => sum + book.unread, 0));
+/** 与 `visible.length` 同口径，切到某个分组时只统计该分组内的未读章数。 */
+const unreadTotal = computed(() => visible.value.reduce((sum, book) => sum + book.unread, 0));
 
 function cacheKey() {
   return `${CACHE_PREFIX}.${auth.state.value?.user_id ?? "anon"}`;
@@ -229,6 +243,7 @@ function open(book: ShelfBook) {
 async function remove(book: ShelfBook) {
   try {
     await api.removeFromShelf(book.book_key);
+    void clearBook(book.book_key);
     books.value = books.value.filter((item) => item.book_key !== book.book_key);
     await refresh();
     message.success(`已移出书架：${book.name}`);
@@ -279,11 +294,20 @@ async function confirmMove() {
   }
 }
 
-async function renameGroup() {
-  const name = window.prompt("新的分组名", editableGroup.value)?.trim();
-  if (!name || name === editableGroup.value) return;
+function openRenameGroup() {
+  renameValue.value = editableGroup.value;
+  renaming.value = true;
+}
+
+async function confirmRenameGroup() {
+  const name = renameValue.value.trim();
+  if (!name || name === editableGroup.value) {
+    renaming.value = false;
+    return;
+  }
   try {
     await api.renameShelfGroup(editableGroup.value, name);
+    renaming.value = false;
     setGroup(name);
     await refresh();
     message.success(`已改名为「${name}」`);
@@ -357,9 +381,19 @@ useShortcuts({
   r: checkUpdates,
 });
 
-onMounted(load);
-//  从正文页返回时进度变了，书架上的「读到第 N 章」要跟着更新
-onActivated(load);
+let skipInitialActivate = false;
+onMounted(() => {
+  skipInitialActivate = true;
+  void load();
+});
+//  从正文页返回时进度变了，书架上的「读到第 N 章」要跟着更新；跳过首次挂载后的重复激活
+onActivated(() => {
+  if (skipInitialActivate) {
+    skipInitialActivate = false;
+    return;
+  }
+  void load();
+});
 onUnmounted(stopPolling);
 </script>
 
@@ -437,7 +471,7 @@ onUnmounted(stopPolling);
           @update:value="setSort"
         />
         <template v-if="editableGroup">
-          <n-button quaternary size="tiny" @click="renameGroup">改名</n-button>
+          <n-button quaternary size="tiny" @click="openRenameGroup">改名</n-button>
           <n-popconfirm @positive-click="dissolveGroup">
             <template #trigger><n-button quaternary size="tiny">解散</n-button></template>
             解散「{{ editableGroup }}」只会把书退回未分组，不会删书。
@@ -458,7 +492,7 @@ onUnmounted(stopPolling);
         <li v-for="book in visible" :key="book.book_key">
           <button type="button" class="grid__item" @click="open(book)">
             <span class="grid__cover">
-              <BookCover :src="book.cover_url" :name="book.name" :width="100" :height="138" />
+              <BookCover :src="book.cover_url" :name="book.name" :author="book.author" :width="100" :height="138" />
               <n-icon v-if="selecting" class="grid__check" size="22">
                 <CheckmarkCircle v-if="selected.has(book.book_key)" />
                 <EllipseOutline v-else />
@@ -483,7 +517,7 @@ onUnmounted(stopPolling);
               <CheckmarkCircle v-if="selected.has(book.book_key)" />
               <EllipseOutline v-else />
             </n-icon>
-            <BookCover :src="book.cover_url" :name="book.name" :width="66" :height="90" />
+            <BookCover :src="book.cover_url" :name="book.name" :author="book.author" :width="66" :height="90" />
             <div class="row__body">
               <p class="row__name">
                 {{ book.name }}
@@ -570,6 +604,28 @@ onUnmounted(stopPolling);
         </div>
       </template>
     </n-modal>
+
+    <n-modal
+      v-model:show="renaming"
+      preset="card"
+      title="重命名分组"
+      class="move"
+      :bordered="false"
+    >
+      <n-input
+        v-model:value="renameValue"
+        placeholder="输入新的分组名"
+        maxlength="128"
+        autofocus
+        @keyup.enter="confirmRenameGroup"
+      />
+      <template #footer>
+        <div class="move__actions">
+          <n-button quaternary @click="renaming = false">取消</n-button>
+          <n-button type="primary" :disabled="!renameValue.trim()" @click="confirmRenameGroup">确定</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -616,7 +672,8 @@ onUnmounted(stopPolling);
 }
 
 .tabs__item--on {
-  color: #fff;
+  color: var(--accent-fg);
+  font-weight: 600;
   background: var(--accent);
   border-color: var(--accent);
 }
@@ -629,7 +686,17 @@ onUnmounted(stopPolling);
 }
 
 .toolbar__sort {
-  width: 130px;
+  width: 112px;
+}
+
+/* 触屏端全局 44px 下拉框在这里显得过于笨重，收紧到 34px 与右侧轻量统计视觉平衡 */
+.toolbar__sort :deep(.n-base-selection-label) {
+  min-height: 34px !important;
+  height: 34px;
+}
+
+.toolbar__sort :deep(.n-base-selection) {
+  border-radius: 999px;
 }
 
 .toolbar__spacer {
@@ -640,6 +707,7 @@ onUnmounted(stopPolling);
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .grid {
@@ -648,7 +716,7 @@ onUnmounted(stopPolling);
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: var(--space-4) var(--space-3);
   margin: 0;
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-4);
   list-style: none;
 }
 
@@ -663,6 +731,17 @@ onUnmounted(stopPolling);
   background: none;
   border: none;
   cursor: pointer;
+  transition: transform 0.16s var(--ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .grid__item:hover {
+    transform: translateY(-2px);
+  }
+}
+
+.grid__item:active {
+  transform: scale(0.98);
 }
 
 .grid__cover {
@@ -673,16 +752,19 @@ onUnmounted(stopPolling);
 
 .grid__badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 18px;
+  top: -5px;
+  right: -5px;
+  min-width: 19px;
   padding: 0 5px;
-  color: #fff;
+  color: var(--badge-fg);
   font-size: 11px;
-  line-height: 18px;
+  font-weight: 600;
+  line-height: 19px;
   text-align: center;
-  background: var(--danger);
+  background: var(--badge-bg);
   border-radius: 999px;
+  /* 外描边把红点与暖色/红色封面 cleanly 隔开 */
+  box-shadow: 0 0 0 2px var(--bg-canvas);
 }
 
 .grid__check {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 打包版的配置页：填服务器地址 + 账号口令，换一条设备 token 存下来。
+ * 打包版的配置页：填服务器地址和设备凭据，或用本地账号口令换取凭据。
  *
  * **只存在于 `--mode packaged` 的那份构建里** —— 路由表里这条记录包在
  * `__FUNREAD_PACKAGED__` 的分支中，浏览器那份构建里整条连同这个组件一起被删掉。
@@ -16,7 +16,7 @@ import { useMessage } from "naive-ui";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { api, issueDeviceToken, UnauthorizedError } from "../../api/client";
+import { api, issueDeviceToken, UnauthorizedError, verifyDeviceToken } from "../../api/client";
 import {
   forgetServer,
   guessDeviceName,
@@ -26,6 +26,7 @@ import {
   saveSession,
 } from "../../api/packaged";
 import { useAuth } from "../../composables/useAuth";
+import { safeInternalNext } from "../../utils/display";
 
 const route = useRoute();
 const router = useRouter();
@@ -35,6 +36,8 @@ const auth = useAuth();
 const server = ref("");
 const username = ref("");
 const password = ref("");
+const credential = ref("");
+const mode = ref<"password" | "sso">("password");
 const deviceName = ref("");
 const submitting = ref(false);
 /** 多行文案（排查清单），所以不走 message —— 那是一行就没了的 toast。 */
@@ -42,8 +45,12 @@ const error = ref("");
 const servers = ref<string[]>([]);
 
 const existing = loadSession();
-const next = computed(() => String(route.query.next || "/web"));
+const next = computed(() => safeInternalNext(route.query.next));
 const title = computed(() => (existing ? "换一台服务器" : "连接到你的 funread"));
+const browserUrl = computed(() => {
+  const normalized = normalizeServer(server.value);
+  return normalized.value?.startsWith("https://") ? `${normalized.value}/web/devices` : "";
+});
 
 function dropServer(item: string) {
   forgetServer(item);
@@ -57,32 +64,60 @@ async function submit() {
     return;
   }
   server.value = normalized.value;
-  if (!username.value.trim() || !password.value) {
+  if (mode.value === "sso" && !normalized.value.startsWith("https://")) {
+    error.value = "统一账号需要 HTTPS 服务器地址。";
+    return;
+  }
+  if (mode.value === "password" && (!username.value.trim() || !password.value)) {
     error.value = "账号和口令都要填。打包版没有同源 cookie 可借，必须自己换一条 token。";
+    return;
+  }
+  if (mode.value === "sso" && !credential.value.trim()) {
+    error.value = "请填入浏览器里创建的设备凭据。";
     return;
   }
 
   submitting.value = true;
   error.value = "";
   try {
-    const issued = await issueDeviceToken({
-      server: normalized.value,
-      username: username.value.trim(),
-      password: password.value,
-      device_name: deviceName.value.trim() || guessDeviceName(),
-    });
+    let token: string;
+    let tokenId: number;
+    let tokenUsername: string;
+    let tokenDeviceName: string;
+    if (mode.value === "sso") {
+      const current = await verifyDeviceToken(normalized.value, credential.value.trim());
+      token = credential.value.trim();
+      tokenId = current.id;
+      tokenUsername = current.username;
+      tokenDeviceName = current.device_name;
+    } else {
+      const issued = await issueDeviceToken({
+        server: normalized.value,
+        username: username.value.trim(),
+        password: password.value,
+        device_name: deviceName.value.trim() || guessDeviceName(),
+      });
+      token = issued.token;
+      tokenId = issued.id;
+      tokenUsername = username.value.trim();
+      tokenDeviceName = issued.device_name;
+    }
     const previous = loadSession();
     saveSession({
       server: normalized.value,
-      token: issued.token,
-      token_id: issued.id,
-      username: username.value.trim(),
-      device_name: issued.device_name,
+      token,
+      token_id: tokenId,
+      username: tokenUsername,
+      device_name: tokenDeviceName,
     });
-    //  同一台服务器上重新登录时，把自己上一条 token 吊销掉 —— 不然每换一次
-    //  口令、每清一次存储，设备列表里就多一条谁也认不出来的僵尸记录。
+    //  同一台服务器上重新登录时，吊销旧凭据，避免设备列表留下无用记录。
     //  换了服务器就不管了（那条 token 在另一台机器上，这里够不着）。
-    if (previous && previous.server === normalized.value && previous.token_id) {
+    if (
+      previous &&
+      previous.server === normalized.value &&
+      previous.token_id &&
+      previous.token_id !== tokenId
+    ) {
       await api.revokeDevice(previous.token_id).catch(() => undefined);
     }
     //  会话状态是模块级单例，上一轮可能缓存着「未登录」。不刷新的话路由守卫
@@ -92,7 +127,7 @@ async function submit() {
     router.replace(next.value);
   } catch (reason) {
     if (reason instanceof UnauthorizedError) {
-      error.value = "账号或口令不对。";
+      error.value = mode.value === "sso" ? "设备凭据无效。" : "账号或口令不对。";
     } else {
       error.value = reason instanceof Error ? reason.message : "连接失败。";
     }
@@ -115,11 +150,9 @@ onMounted(() => {
 <template>
   <div class="gate">
     <div class="gate__card">
+      <div class="gate__brand" aria-hidden="true">f</div>
       <h1 class="gate__title">{{ title }}</h1>
-      <p class="gate__subtitle">
-        funread 是自托管的，没有官方服务器可连。填上你自己那台的地址和账号，
-        这台设备会换到一条长期有效的凭据，之后就不用再登录了。
-      </p>
+      <p class="gate__subtitle">填写你的 Funread 服务器地址，连接这台设备。</p>
 
       <n-form @submit.prevent="submit">
         <n-form-item label="服务器地址" :show-feedback="false">
@@ -153,28 +186,58 @@ onMounted(() => {
           </n-tag>
         </div>
 
-        <n-form-item label="用户名" :show-feedback="false">
-          <n-input
-            v-model:value="username"
-            placeholder="用户名"
-            :input-props="{ autocapitalize: 'off', autocorrect: 'off', autocomplete: 'username' }"
-          />
-        </n-form-item>
+        <n-radio-group v-model:value="mode" class="login-mode">
+          <n-radio-button value="password">账号口令</n-radio-button>
+          <n-radio-button value="sso">统一账号</n-radio-button>
+        </n-radio-group>
 
-        <n-form-item label="口令" :show-feedback="false">
-          <n-input
-            v-model:value="password"
-            type="password"
-            show-password-on="click"
-            placeholder="口令"
-            :input-props="{ autocomplete: 'current-password' }"
-            @keyup.enter="submit"
-          />
-        </n-form-item>
+        <template v-if="mode === 'sso'">
+          <n-button
+            tag="a"
+            block
+            class="sso-open"
+            :href="browserUrl || undefined"
+            target="_blank"
+            rel="noopener noreferrer"
+            :disabled="!browserUrl"
+          >
+            在浏览器中创建设备凭据
+          </n-button>
+          <n-form-item label="设备凭据" :show-feedback="false">
+            <n-input
+              v-model:value="credential"
+              type="password"
+              show-password-on="click"
+              placeholder="粘贴设备凭据"
+              @keyup.enter="submit"
+            />
+          </n-form-item>
+        </template>
 
-        <n-form-item label="设备名" :show-feedback="false">
-          <n-input v-model:value="deviceName" placeholder="这台设备在「我的设备」里显示的名字" />
-        </n-form-item>
+        <template v-else>
+          <n-form-item label="用户名" :show-feedback="false">
+            <n-input
+              v-model:value="username"
+              placeholder="用户名"
+              :input-props="{ autocapitalize: 'off', autocorrect: 'off', autocomplete: 'username' }"
+            />
+          </n-form-item>
+
+          <n-form-item label="口令" :show-feedback="false">
+            <n-input
+              v-model:value="password"
+              type="password"
+              show-password-on="click"
+              placeholder="口令"
+              :input-props="{ autocomplete: 'current-password' }"
+              @keyup.enter="submit"
+            />
+          </n-form-item>
+
+          <n-form-item label="设备名" :show-feedback="false">
+            <n-input v-model:value="deviceName" placeholder="这台设备在「我的设备」里显示的名字" />
+          </n-form-item>
+        </template>
 
         <n-button
           type="primary"
@@ -195,7 +258,7 @@ onMounted(() => {
         <n-button text @click="router.back()">取消，回到 {{ existing.server }}</n-button>
       </p>
 
-      <p class="gate__note">
+      <p v-if="mode === 'password'" class="gate__note">
         口令不会存在这台设备上 —— 存的是服务端签发的设备 token，可以在任意一台
         设备的「我的 → 我的设备」里单独吊销。
       </p>
@@ -213,7 +276,40 @@ onMounted(() => {
 }
 
 .gate__card {
-  width: min(100%, 360px);
+  width: min(100%, 380px);
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
+}
+
+.gate__brand {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-3);
+  place-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-radius: 12px;
+}
+
+.login-mode {
+  display: flex;
+  width: 100%;
+  margin: var(--space-3) 0 var(--space-3);
+}
+
+.login-mode :deep(.n-radio-button) {
+  flex: 1;
+  text-align: center;
+}
+
+.sso-open {
+  margin-bottom: var(--space-3);
 }
 
 .gate__title {

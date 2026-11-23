@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { useAuth } from "../../composables/useAuth";
+import { safeInternalNext } from "../../utils/display";
 
 const route = useRoute();
 const router = useRouter();
@@ -14,8 +15,13 @@ const auth = useAuth();
 const username = ref("");
 const password = ref("");
 const submitting = ref(false);
+const ready = ref(false);
 
-const next = computed(() => String(route.query.next || "/web"));
+const next = computed(() => safeInternalNext(route.query.next));
+
+function ssoLogin() {
+  window.location.assign(`/api/v1/auth/oidc/login?next=${encodeURIComponent(next.value)}`);
+}
 
 async function submit() {
   if (!username.value.trim() || !password.value) return;
@@ -30,16 +36,31 @@ async function submit() {
   }
 }
 
-onMounted(() => auth.ensure());
+onMounted(async () => {
+  await auth.ensure();
+  ready.value = true;
+});
 </script>
 
 <template>
   <div class="gate">
     <div class="gate__card">
+      <div class="gate__brand" aria-hidden="true">f</div>
       <h1 class="gate__title">funread</h1>
       <p class="gate__subtitle">登录后同步书架、阅读进度和订阅</p>
 
-      <n-form @submit.prevent="submit">
+      <n-spin v-if="!ready" />
+      <n-button
+        v-else-if="auth.oidcEnabled.value"
+        type="primary"
+        block
+        size="large"
+        @click="ssoLogin"
+      >
+        使用统一账号登录
+      </n-button>
+
+      <n-form v-else @submit.prevent="submit">
         <n-form-item label="用户名" :show-feedback="false">
           <n-input
             v-model:value="username"
@@ -71,17 +92,20 @@ onMounted(() => auth.ensure());
 
       <!-- isLocal 也放行：零账号那条路服务端不受 [auth] register_open 约束，
            这边藏掉链接会让关了注册的新机器永远开不出第一个账号。 -->
-      <p v-if="auth.registerOpen.value || auth.isLocal.value" class="gate__alt">
+      <p
+        v-if="ready && !auth.oidcEnabled.value && (auth.registerOpen.value || auth.isLocal.value)"
+        class="gate__alt"
+      >
         还没有账号？
         <RouterLink :to="{ name: 'register', query: { next } }">
           {{ auth.isLocal.value ? "注册第一个账号" : "用邀请码注册" }}
         </RouterLink>
       </p>
-      <p v-else class="gate__alt gate__alt--muted">
+      <p v-else-if="ready && !auth.oidcEnabled.value" class="gate__alt gate__alt--muted">
         注册未开放。需要管理员签发一张邀请码才能开新账号。
       </p>
 
-      <p class="gate__admin">
+      <p v-if="ready && !auth.oidcEnabled.value" class="gate__admin">
         <RouterLink :to="{ name: 'admin-login' }">管理端登录</RouterLink>
       </p>
     </div>
@@ -98,7 +122,25 @@ onMounted(() => auth.ensure());
 }
 
 .gate__card {
-  width: min(100%, 360px);
+  width: min(100%, 380px);
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
+}
+
+.gate__brand {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-3);
+  place-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-radius: 12px;
 }
 
 .gate__title {

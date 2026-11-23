@@ -47,7 +47,8 @@ function goBack() {
   /* 刘海屏横屏时左右也要让 */
   padding-left: max(var(--space-4), env(safe-area-inset-left));
   padding-right: max(var(--space-4), env(safe-area-inset-right));
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-subtle);
 }
 

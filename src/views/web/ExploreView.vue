@@ -11,7 +11,7 @@
  */
 import { ChevronForwardOutline, SearchOutline } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -20,6 +20,9 @@ import BookCard from "../../components/web/BookCard.vue";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useAuth } from "../../composables/useAuth";
+import { useShortcuts } from "../../composables/useShortcuts";
+
+defineOptions({ name: "ExploreView" });
 
 const PAGE_SIZE = 30;
 
@@ -34,6 +37,7 @@ const sources = ref<ExploreSource[]>([]);
 const sourcesTotal = ref(0);
 const keyword = ref("");
 const activeQuery = ref("");
+const searchInput = ref<{ focus: () => void } | null>(null);
 
 const source = ref<ExploreSource | null>(null);
 const kinds = ref<ExploreKind[]>([]);
@@ -47,6 +51,17 @@ const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref("");
 let requestVersion = 0;
+let activeAbort: AbortController | null = null;
+
+function beginRequest(): AbortSignal {
+  activeAbort?.abort();
+  activeAbort = new AbortController();
+  return activeAbort.signal;
+}
+
+onBeforeUnmount(() => {
+  activeAbort?.abort();
+});
 
 const title = computed(() => {
   if (step.value === "books" && kind.value) return `${source.value?.name} · ${kind.value.name}`;
@@ -56,6 +71,7 @@ const title = computed(() => {
 
 async function loadSources(reset = true) {
   const version = ++requestVersion;
+  const signal = beginRequest();
   if (reset) {
     activeQuery.value = keyword.value.trim();
     loading.value = true;
@@ -65,16 +81,19 @@ async function loadSources(reset = true) {
   }
   error.value = "";
   try {
-    const result = await api.exploreSources({
-      q: activeQuery.value,
-      limit: PAGE_SIZE,
-      offset: reset ? 0 : sources.value.length,
-    });
-    if (version !== requestVersion) return;
+    const result = await api.exploreSources(
+      {
+        q: activeQuery.value,
+        limit: PAGE_SIZE,
+        offset: reset ? 0 : sources.value.length,
+      },
+      { signal },
+    );
+    if (version !== requestVersion || signal.aborted) return;
     sources.value = reset ? result.items : [...sources.value, ...result.items];
     sourcesTotal.value = result.total;
   } catch (reason) {
-    if (version !== requestVersion) return;
+    if (version !== requestVersion || signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
     if (version === requestVersion) {
@@ -86,6 +105,7 @@ async function loadSources(reset = true) {
 
 async function openSource(item: ExploreSource) {
   const version = ++requestVersion;
+  const signal = beginRequest();
   source.value = item;
   step.value = "kinds";
   kinds.value = [];
@@ -93,11 +113,11 @@ async function openSource(item: ExploreSource) {
   loading.value = true;
   error.value = "";
   try {
-    const result = await api.exploreKinds(item.url_id);
-    if (version !== requestVersion) return;
+    const result = await api.exploreKinds(item.url_id, { signal });
+    if (version !== requestVersion || signal.aborted) return;
     kinds.value = result;
   } catch (reason) {
-    if (version !== requestVersion) return;
+    if (version !== requestVersion || signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "分类加载失败";
   } finally {
     if (version === requestVersion) loading.value = false;
@@ -106,6 +126,7 @@ async function openSource(item: ExploreSource) {
 
 async function openKind(item: ExploreKind, nextPage = 1) {
   const version = ++requestVersion;
+  const signal = beginRequest();
   kind.value = item;
   step.value = "books";
   if (nextPage === 1) {
@@ -116,22 +137,24 @@ async function openKind(item: ExploreKind, nextPage = 1) {
   }
   error.value = "";
   try {
-    const result = await api.explore({
-      url_id: source.value!.url_id,
-      url: item.url,
-      page: nextPage,
-    });
-    if (version !== requestVersion) return;
+    const result = await api.explore(
+      {
+        url_id: source.value!.url_id,
+        url: item.url,
+        page: nextPage,
+      },
+      { signal },
+    );
+    if (version !== requestVersion || signal.aborted) return;
     //  按 book_key 去重：源站翻页经常把上一页的条目又给一遍
     const seen = new Set(books.value.map((book) => book.book_key));
     const fresh = result.items.filter((book) => !seen.has(book.book_key));
     books.value = nextPage === 1 ? result.items : [...books.value, ...fresh];
     page.value = nextPage;
-    //  源不会告诉我们总页数，所以「还有更多」= 这一页拿到了东西。
-    //  拿到空页就说明到底了。
-    hasMore.value = result.items.length > 0;
+    //  第一页看返回条数，翻页后看是否真有新增 —— 避免不支持分页的源无限重复第 1 页
+    hasMore.value = nextPage === 1 ? result.items.length > 0 : fresh.length > 0;
   } catch (reason) {
-    if (version !== requestVersion) return;
+    if (version !== requestVersion || signal.aborted) return;
     if (nextPage === 1) error.value = reason instanceof Error ? reason.message : "加载失败";
     else message.error(reason instanceof Error ? reason.message : "加载更多失败");
   } finally {
@@ -144,6 +167,7 @@ async function openKind(item: ExploreKind, nextPage = 1) {
 
 function back() {
   requestVersion += 1;
+  activeAbort?.abort();
   loading.value = false;
   loadingMore.value = false;
   error.value = "";
@@ -158,6 +182,16 @@ function back() {
     source.value = null;
   }
 }
+
+useShortcuts({
+  "/": () => {
+    if (step.value === "sources") searchInput.value?.focus();
+    else router.push({ name: "search" });
+  },
+  Escape: () => {
+    if (step.value !== "sources") back();
+  },
+});
 
 function open(book: SearchBook) {
   const primary = book.sources[0];
@@ -201,6 +235,7 @@ onMounted(() => loadSources());
     <template v-else-if="step === 'sources'">
       <div class="search">
         <n-input
+          ref="searchInput"
           v-model:value="keyword"
           placeholder="搜源名"
           :input-props="{ 'aria-label': '源名称' }"

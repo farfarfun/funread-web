@@ -11,6 +11,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api } from "../../api/client";
 import type { AccountSummary } from "../../api/types";
 import { useAuth } from "../../composables/useAuth";
+import { safeInternalNext } from "../../utils/display";
 
 const route = useRoute();
 const router = useRouter();
@@ -25,7 +26,7 @@ const code = ref("");
 const submitting = ref(false);
 const probing = ref(true);
 
-const next = computed(() => String(route.query.next || "/web"));
+const next = computed(() => safeInternalNext(route.query.next));
 const minLength = computed(() => summary.value?.min_password_length ?? 8);
 /** 首次运行：不要邀请码，且提示一句第一个账号会接管之前攒下的书架。 */
 const isFirst = computed(() => Boolean(summary.value?.bootstrap));
@@ -86,6 +87,7 @@ onMounted(async () => {
 <template>
   <div class="gate">
     <div class="gate__card">
+      <div class="gate__brand" aria-hidden="true">f</div>
       <h1 class="gate__title">注册</h1>
 
       <n-spin v-if="probing" class="gate__spin" />
@@ -178,7 +180,25 @@ onMounted(async () => {
 }
 
 .gate__card {
-  width: min(100%, 360px);
+  width: min(100%, 380px);
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 8%);
+}
+
+.gate__brand {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-3);
+  place-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-radius: 12px;
 }
 
 .gate__title {
@@ -212,7 +232,7 @@ onMounted(async () => {
 .gate__problem {
   margin: var(--space-3) 0 0;
   font-size: 12px;
-  color: #d03050;
+  color: var(--danger);
 }
 
 .gate__submit {

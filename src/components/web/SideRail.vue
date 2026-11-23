@@ -9,6 +9,7 @@
  * 和 TabBar 共用同一份 TABS 定义 —— 两处各写一份迟早会漂移（加了一个 tab 只改
  * 了一边）。
  */
+import { SettingsOutline } from "@vicons/ionicons5";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
@@ -38,7 +39,10 @@ const { isAdmin } = useAuth();
         </RouterLink>
       </nav>
 
-      <RouterLink v-if="isAdmin" to="/admin/sources" class="rail__admin">管理中心</RouterLink>
+      <RouterLink v-if="isAdmin" to="/admin/sources" class="rail__admin">
+        <n-icon size="17"><SettingsOutline /></n-icon>
+        <span>管理中心</span>
+      </RouterLink>
     </div>
   </aside>
 </template>
@@ -76,8 +80,8 @@ const { isAdmin } = useAuth();
   width: 32px;
   height: 32px;
   place-items: center;
-  color: white;
-  background: #167a69;
+  color: var(--accent-fg);
+  background: var(--accent);
   border-radius: 8px;
 }
 
@@ -91,6 +95,7 @@ const { isAdmin } = useAuth();
   color: var(--text-muted);
   text-decoration: none;
   border-radius: 6px;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
 }
 
 .rail__item:hover {
@@ -104,11 +109,21 @@ const { isAdmin } = useAuth();
 }
 
 .rail__admin {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
   margin-top: auto;
-  padding: 12px var(--space-3);
+  padding: 10px var(--space-3);
   font-size: 13px;
   color: var(--text-muted);
   text-decoration: none;
   border-top: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.rail__admin:hover {
+  color: var(--accent);
+  background: var(--surface-sunken);
 }
 </style>

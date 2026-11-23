@@ -8,31 +8,15 @@ import {
   PeopleOutline,
   SunnyOutline,
 } from "@vicons/ionicons5";
-import type { GlobalThemeOverrides } from "naive-ui";
 import { darkTheme, dateZhCN, zhCN } from "naive-ui";
 import { computed } from "vue";
 
+import { useNaiveThemeOverrides } from "../composables/useNaiveTheme";
 import { useTheme } from "../composables/useTheme";
 
 const { dark, toggle } = useTheme();
 const theme = computed(() => (dark.value ? darkTheme : null));
-
-const primary = "#167A69";
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: primary,
-    primaryColorHover: "#1B927E",
-    primaryColorPressed: "#116557",
-    primaryColorSuppl: "rgba(22, 122, 105, 0.14)",
-    borderRadius: "8px",
-    borderRadiusSmall: "6px",
-    fontFamily:
-      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
-  },
-  Card: { borderRadius: "8px" },
-  Button: { borderRadiusMedium: "8px", borderRadiusSmall: "6px", borderRadiusTiny: "6px" },
-  Input: { borderRadius: "8px" },
-};
+const themeOverrides = useNaiveThemeOverrides(dark);
 </script>
 
 <template>
@@ -88,8 +72,8 @@ const themeOverrides: GlobalThemeOverrides = {
   top: -60px;
   left: 16px;
   padding: 10px 14px;
-  color: #fff;
-  background: #167a69;
+  color: var(--accent-fg);
+  background: var(--accent);
   border-radius: 6px;
 }
 
@@ -125,8 +109,8 @@ const themeOverrides: GlobalThemeOverrides = {
   width: 32px;
   height: 32px;
   place-items: center;
-  color: #fff;
-  background: #167a69;
+  color: var(--accent-fg);
+  background: var(--accent);
   border-radius: 8px;
 }
 
@@ -145,6 +129,7 @@ const themeOverrides: GlobalThemeOverrides = {
   color: var(--text-muted);
   text-decoration: none;
   border-radius: 6px;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
 }
 
 .admin-nav__item.router-link-active,

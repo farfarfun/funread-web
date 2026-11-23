@@ -6,7 +6,7 @@
  * 住主线程好几秒。这里不引虚拟列表库，自己按固定行高算可见窗口 —— 行高是固定
  * 的（单行省略号），所以算起来没有悬念，而引一个库要多一份依赖和一套 API。
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import type { Chapter } from "../../api/types";
 
@@ -63,17 +63,32 @@ function onScroll(event: Event) {
 /** 滚到当前进度所在的那一章。打开目录时自动调一次。 */
 function scrollToCurrent() {
   if (!viewport.value || props.currentIndex < 0) return;
+  measure();
   const position = visibleChapters.value.findIndex(
     (chapter) => chapter.index === props.currentIndex,
   );
   if (position < 0) return;
-  //  放在视口三分之一处而不是顶端：上下都能看到相邻章节，更容易确认位置
-  viewport.value.scrollTop = Math.max(0, position * ROW_HEIGHT - viewportHeight.value / 3);
+  //  放在视口三分之一处而不是顶端：上下都能看到相邻章节，更容易确认位置；
+  //  同步更新 scrollTop，避免抽屉刚打开时因 scroll 事件延迟导致虚拟窗口露白。
+  const target = Math.max(0, position * ROW_HEIGHT - viewportHeight.value / 3);
+  viewport.value.scrollTop = target;
+  scrollTop.value = target;
 }
+
+let resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
   measure();
   scrollToCurrent();
+  if (typeof ResizeObserver !== "undefined" && viewport.value) {
+    resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(viewport.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
 });
 
 //  过滤或倒序会让行数变化，旧的 scrollTop 可能已经越界
@@ -97,6 +112,7 @@ defineExpose({ scrollToCurrent });
             type="button"
             class="chapter"
             :class="{ 'chapter--current': chapter.index === currentIndex }"
+            :aria-current="chapter.index === currentIndex ? 'true' : undefined"
             @click="emit('pick', chapter)"
           >
             <span class="chapter__name">{{ chapter.name }}</span>
@@ -149,11 +165,20 @@ defineExpose({ scrollToCurrent });
   border: none;
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
+  transition: background 0.14s var(--ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chapter:hover {
+    background: var(--surface-sunken);
+  }
 }
 
 .chapter--current {
+  font-weight: 600;
   color: var(--accent);
-  background: var(--surface-sunken);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .chapter__name {

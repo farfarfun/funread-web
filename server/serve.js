@@ -17,6 +17,7 @@ import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import { PROXY_PREFIXES } from "./config.js";
 
@@ -44,12 +45,34 @@ const MIME_TYPES = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+const COMPRESSIBLE_EXTENSIONS = new Set([
+  ".html",
+  ".js",
+  ".mjs",
+  ".css",
+  ".json",
+  ".svg",
+  ".webmanifest",
+  ".txt",
+  ".map",
+]);
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "SAMEORIGIN",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+};
+
 function isProxyPath(pathname) {
   return PROXY_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
 function send(response, status, body, headers = {}) {
-  response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", ...headers });
+  response.writeHead(status, {
+    ...SECURITY_HEADERS,
+    "Content-Type": "text/plain; charset=utf-8",
+    ...headers,
+  });
   response.end(body);
 }
 
@@ -59,7 +82,7 @@ function proxy(request, response, backend) {
   // Rewrite Host to the backend's, and record the original for the backend's benefit.
   headers.host = target.host;
   headers["x-forwarded-host"] = request.headers.host ?? "";
-  headers["x-forwarded-proto"] = "http";
+  headers["x-forwarded-proto"] = request.headers["x-forwarded-proto"] || "http";
 
   const upstream = (target.protocol === "https:" ? https : http).request(
     {
@@ -76,7 +99,17 @@ function proxy(request, response, backend) {
     },
   );
 
+  // 客户端提前断开时立刻销毁上游连接，避免慢搜索/长查询在后端继续空跑
+  const abortUpstream = () => {
+    if (!upstream.destroyed) upstream.destroy();
+  };
+  request.on("aborted", abortUpstream);
+  response.on("close", () => {
+    if (!response.writableEnded) abortUpstream();
+  });
+
   upstream.on("error", (error) => {
+    if (response.destroyed || response.writableEnded) return;
     if (response.headersSent) {
       response.destroy();
       return;
@@ -95,22 +128,81 @@ function resolveStatic(root, pathname) {
   const relative = path.normalize(pathname).replace(/^(\.\.[/\\])+/, "");
   const candidate = path.join(root, relative);
   const resolvedRoot = path.resolve(root);
-  if (!path.resolve(candidate).startsWith(resolvedRoot)) return null;
-  return candidate;
+  const resolvedCandidate = path.resolve(candidate);
+  // 必须带路径分隔符校验，避免同前缀兄弟目录（如 /dist-secret）绕过
+  if (
+    resolvedCandidate !== resolvedRoot &&
+    !resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+  return resolvedCandidate;
 }
 
-function serveFile(response, filePath, { immutable = false } = {}) {
+function selectEncoding(request, extension, size) {
+  if (size < 256 || !COMPRESSIBLE_EXTENSIONS.has(extension)) return null;
+  const accept = String(request.headers["accept-encoding"] || "").toLowerCase();
+  if (/\bbr\b/.test(accept)) return "br";
+  if (/\bgzip\b/.test(accept)) return "gzip";
+  return null;
+}
+
+function makeEtag(stats) {
+  return `W/"${stats.size.toString(16)}-${Math.trunc(stats.mtimeMs).toString(16)}"`;
+}
+
+function serveFile(request, response, filePath, stats, { immutable = false } = {}) {
   const extension = path.extname(filePath).toLowerCase();
+  const etag = makeEtag(stats);
+  const cacheControl = immutable ? "public, max-age=31536000, immutable" : "no-cache";
+  const baseHeaders = {
+    ...SECURITY_HEADERS,
+    "Content-Type": MIME_TYPES[extension] ?? "application/octet-stream",
+    "Cache-Control": cacheControl,
+    ETag: etag,
+    Vary: "Accept-Encoding",
+  };
+
+  if (request.headers["if-none-match"] === etag) {
+    response.writeHead(304, baseHeaders);
+    response.end();
+    return;
+  }
+
+  const encoding = selectEncoding(request, extension, stats.size);
+  const headers = encoding
+    ? { ...baseHeaders, "Content-Encoding": encoding }
+    : { ...baseHeaders, "Content-Length": String(stats.size) };
+
+  if (request.method === "HEAD") {
+    response.writeHead(200, headers);
+    response.end();
+    return;
+  }
+
   const stream = fs.createReadStream(filePath);
   stream.on("open", () => {
-    response.writeHead(200, {
-      "Content-Type": MIME_TYPES[extension] ?? "application/octet-stream",
-      // Vite fingerprints everything under /assets, so those are safe to pin.
-      "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
-    });
-    stream.pipe(response);
+    response.writeHead(200, headers);
+    if (encoding === "br") {
+      stream.pipe(zlib.createBrotliCompress()).pipe(response);
+    } else if (encoding === "gzip") {
+      stream.pipe(zlib.createGzip()).pipe(response);
+    } else {
+      stream.pipe(response);
+    }
   });
-  stream.on("error", () => send(response, 404, "not found\n"));
+  stream.on("error", () => {
+    if (!response.headersSent) send(response, 404, "not found\n");
+    else response.destroy();
+  });
+}
+
+function safeStat(filePath) {
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -158,25 +250,23 @@ export function createRequestHandler({ root, backend }) {
       send(response, 403, "forbidden\n");
       return;
     }
-    let stats = null;
-    try {
-      stats = fs.statSync(candidate);
-    } catch {
-      stats = null;
-    }
+    const stats = safeStat(candidate);
     if (stats?.isFile()) {
-      serveFile(response, candidate, { immutable: pathname.startsWith("/assets/") });
+      serveFile(request, response, candidate, stats, {
+        immutable: pathname.startsWith("/assets/"),
+      });
       return;
     }
 
     // 5. Anything under a known base is a client-side route -> index.html.
     const base = APP_BASES.find((b) => pathname === b || pathname.startsWith(`${b}/`));
     if (base) {
-      if (!fs.existsSync(indexPath)) {
+      const indexStats = safeStat(indexPath);
+      if (!indexStats?.isFile()) {
         send(response, 503, "build output missing; run `pnpm build`\n");
         return;
       }
-      serveFile(response, indexPath);
+      serveFile(request, response, indexPath, indexStats);
       return;
     }
 

@@ -21,6 +21,11 @@ export function useAutoScroll(target: Ref<HTMLElement | null>) {
   function tick(now: number) {
     const element = target.value;
     if (!running.value || !element) return;
+    if (typeof document !== "undefined" && document.hidden) {
+      lastTime = 0;
+      frame = requestAnimationFrame(tick);
+      return;
+    }
 
     //  第一帧只用来取基准时间 —— 否则 now - 0 是个巨大的 delta，会直接滚到底
     if (!lastTime) {

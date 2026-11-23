@@ -10,16 +10,25 @@ import type { Subscription } from "../../api/types";
 import SkeletonList from "../../components/web/SkeletonList.vue";
 import TopBar from "../../components/web/TopBar.vue";
 
+defineOptions({ name: "RssView" });
+
 const router = useRouter();
 const message = useMessage();
 
 const subscriptions = ref<Subscription[]>([]);
+const failedIcons = ref<Set<string>>(new Set());
 const loading = ref(true);
 const error = ref("");
 const showAdd = ref(false);
 const feedUrl = ref("");
 const feedTitle = ref("");
 const subscribing = ref(false);
+
+const MAX_OPML_FILE_BYTES = 4 * 1024 * 1024;
+
+function markIconFailed(subId: string) {
+  failedIcons.value = new Set(failedIcons.value).add(subId);
+}
 /**
  * 正在看哪一条的报错详情。
  *
@@ -47,6 +56,10 @@ async function importOpml(event: Event) {
   const file = input.files?.[0];
   input.value = "";
   if (!file) return;
+  if (file.size > MAX_OPML_FILE_BYTES) {
+    message.error("OPML 文件过大（超过 4MB），无法导入");
+    return;
+  }
   importing.value = true;
   try {
     const result = await api.importOpml(await file.text());
@@ -77,7 +90,7 @@ async function exportOpml() {
     anchor.href = url;
     anchor.download = "funread-subscriptions.opml";
     anchor.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "导出失败");
   }
@@ -137,8 +150,18 @@ async function remove(subscription: Subscription) {
   }
 }
 
-onMounted(load);
-onActivated(load);
+let skipInitialActivate = false;
+onMounted(() => {
+  skipInitialActivate = true;
+  void load();
+});
+onActivated(() => {
+  if (skipInitialActivate) {
+    skipInitialActivate = false;
+    return;
+  }
+  void load();
+});
 </script>
 
 <template>
@@ -201,12 +224,13 @@ onActivated(load);
         >
           <div class="sub">
             <img
-              v-if="subscription.icon"
+              v-if="subscription.icon && !failedIcons.has(subscription.sub_id)"
               class="sub__icon"
               :src="subscription.icon"
               alt=""
               loading="lazy"
               referrerpolicy="no-referrer"
+              @error="markIconFailed(subscription.sub_id)"
             />
             <span v-else class="sub__icon sub__icon--text">
               {{ subscription.title.slice(0, 1) || "订" }}
@@ -249,10 +273,15 @@ onActivated(load);
           v-model:value="feedUrl"
           placeholder="https://example.com/feed.xml"
           :input-props="{ type: 'url', autocapitalize: 'off', autocorrect: 'off' }"
+          @keyup.enter="addFeed"
         />
       </n-form-item>
       <n-form-item label="自定名称（可留空）" :show-feedback="false">
-        <n-input v-model:value="feedTitle" placeholder="留空则用 feed 自己的标题" />
+        <n-input
+          v-model:value="feedTitle"
+          placeholder="留空则用 feed 自己的标题"
+          @keyup.enter="addFeed"
+        />
       </n-form-item>
       <p class="hint hint--left">
         支持 RSS 2.0 与 Atom。订阅前服务端会先抓一次验证，贴错地址会当场告诉你。
@@ -260,7 +289,14 @@ onActivated(load);
       <template #footer>
         <div class="modal-actions">
           <n-button @click="showAdd = false">取消</n-button>
-          <n-button type="primary" :loading="subscribing" @click="addFeed">订阅</n-button>
+          <n-button
+            type="primary"
+            :loading="subscribing"
+            :disabled="!feedUrl.trim()"
+            @click="addFeed"
+          >
+            订阅
+          </n-button>
         </div>
       </template>
     </n-modal>
@@ -382,7 +418,7 @@ onActivated(load);
 .sub__warn {
   flex: none;
   font-size: 15px;
-  color: #d03050;
+  color: var(--danger);
   cursor: pointer;
 }
 

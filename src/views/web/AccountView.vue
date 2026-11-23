@@ -1,17 +1,27 @@
 <script setup lang="ts">
 /** 「我的」。管理端入口放在这里，不进 TabBar —— 读者用不着看到它。 */
-import { MoonOutline, SunnyOutline } from "@vicons/ionicons5";
+import {
+  ChevronForwardOutline,
+  CloudUploadOutline,
+  CompassOutline,
+  LayersOutline,
+  MoonOutline,
+  PhonePortraitOutline,
+  StarOutline,
+  SunnyOutline,
+  TimeOutline,
+} from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, onActivated, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { api } from "../../api/client";
 import { clearSession, loadSession } from "../../api/packaged";
-import type { ShelfBook } from "../../api/types";
 import TopBar from "../../components/web/TopBar.vue";
 import { useAuth } from "../../composables/useAuth";
 import { useSearchHistory } from "../../composables/useSearchHistory";
 import { useTheme } from "../../composables/useTheme";
+import { clearAllOffline, countAllCachedChapters } from "../../utils/offline";
 
 /**
  * funread light（Capacitor 套壳）往 WebView 上挂的原生对象，只有「回到填地址的
@@ -38,35 +48,28 @@ const packagedServer = packaged ? (loadSession()?.server ?? "") : "";
 const { dark, toggle } = useTheme();
 const { history, clear: clearHistory } = useSearchHistory();
 
-const books = ref<ShelfBook[]>([]);
 const cachedTotal = ref(0);
 const counting = ref(true);
 
 //  两种形态下「退出」的后果不一样：浏览器里是注销会话，打包版里是把这台设备的
 //  token 吊销掉。文案得跟着变，否则用户以为只是登出、下次打开才发现要重配。
-const logoutHint = packaged
-  ? "退出会吊销这台设备的 token，下次打开要重新填服务器地址和账号口令。确定吗？"
-  : "退出后书架和订阅需要重新登录才能看到，确定吗？";
+const logoutHint = computed(() =>
+  packaged
+    ? auth.oidcEnabled.value
+      ? "退出会吊销这台设备的凭据，下次需要重新连接。确定吗？"
+      : "退出会吊销这台设备的 token，下次打开要重新填服务器地址和账号口令。确定吗？"
+    : "退出后书架和订阅需要重新登录才能看到，确定吗？",
+);
 
 const cachedLabel = computed(() =>
-  counting.value ? "统计中…" : `${cachedTotal.value} 章已缓存`,
+  counting.value ? "统计中…" : `${cachedTotal.value} 章已缓存（本机）`,
 );
 
 async function countCache() {
   counting.value = true;
   try {
-    books.value = await api.shelf();
-    //  逐本问一次。书架通常是几本到几十本，串起来也只是几十个小请求，
-    //  比为这一个数字加一个聚合接口划算。
-    const results = await Promise.all(
-      books.value.map((book) =>
-        api
-          .cached(book.book_key)
-          .then((state) => state.chapter_indexes.length)
-          .catch(() => 0),
-      ),
-    );
-    cachedTotal.value = results.reduce((sum, value) => sum + value, 0);
+    //  直接统计本机 IndexedDB 离线存储，零网络 N+1 请求且断网可用
+    cachedTotal.value = await countAllCachedChapters();
   } catch {
     cachedTotal.value = 0;
   } finally {
@@ -76,9 +79,9 @@ async function countCache() {
 
 async function clearAllCache() {
   try {
-    await Promise.all(books.value.map((book) => api.clearCache(book.book_key).catch(() => undefined)));
+    await clearAllOffline();
     cachedTotal.value = 0;
-    message.success("已清空所有离线缓存");
+    message.success("已清空本机离线缓存");
   } catch (reason) {
     message.error(reason instanceof Error ? reason.message : "清空失败");
   }
@@ -100,8 +103,17 @@ async function logout() {
   router.replace({ name: "login" });
 }
 
+let skipInitialActivate = false;
 onMounted(() => {
+  skipInitialActivate = true;
   auth.ensure();
+  countCache();
+});
+onActivated(() => {
+  if (skipInitialActivate) {
+    skipInitialActivate = false;
+    return;
+  }
   countCache();
 });
 </script>
@@ -160,22 +172,70 @@ onMounted(() => {
         </template>
       </n-list-item>
 
-      <n-list-item @click="router.push({ name: 'rss-favorites' })">
-        <div class="row"><span>收藏的文章</span></div>
-      </n-list-item>
-
-      <n-list-item @click="router.push({ name: 'rss-history' })">
-        <div class="row"><span>阅读历史</span></div>
-      </n-list-item>
-
-      <n-list-item @click="router.push({ name: 'rss-sources' })">
-        <div class="row"><span>订阅源目录</span></div>
-      </n-list-item>
-
-      <n-list-item @click="router.push({ name: 'devices' })">
+      <n-list-item
+        clickable
+        role="button"
+        tabindex="0"
+        @click="router.push({ name: 'rss-favorites' })"
+        @keyup.enter="router.push({ name: 'rss-favorites' })"
+      >
         <div class="row">
-          <span>我的设备</span>
-          <span class="row__value">手机丢了在这里吊销</span>
+          <span class="row__label">
+            <n-icon size="17" class="row__icon"><StarOutline /></n-icon>
+            <span>收藏的文章</span>
+          </span>
+          <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+        </div>
+      </n-list-item>
+
+      <n-list-item
+        clickable
+        role="button"
+        tabindex="0"
+        @click="router.push({ name: 'rss-history' })"
+        @keyup.enter="router.push({ name: 'rss-history' })"
+      >
+        <div class="row">
+          <span class="row__label">
+            <n-icon size="17" class="row__icon"><TimeOutline /></n-icon>
+            <span>阅读历史</span>
+          </span>
+          <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+        </div>
+      </n-list-item>
+
+      <n-list-item
+        clickable
+        role="button"
+        tabindex="0"
+        @click="router.push({ name: 'rss-sources' })"
+        @keyup.enter="router.push({ name: 'rss-sources' })"
+      >
+        <div class="row">
+          <span class="row__label">
+            <n-icon size="17" class="row__icon"><CompassOutline /></n-icon>
+            <span>订阅源目录</span>
+          </span>
+          <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+        </div>
+      </n-list-item>
+
+      <n-list-item
+        clickable
+        role="button"
+        tabindex="0"
+        @click="router.push({ name: 'devices' })"
+        @keyup.enter="router.push({ name: 'devices' })"
+      >
+        <div class="row">
+          <span class="row__label">
+            <n-icon size="17" class="row__icon"><PhonePortraitOutline /></n-icon>
+            <span>我的设备</span>
+          </span>
+          <span class="row__trailing">
+            <span class="row__value">手机丢了在这里吊销</span>
+            <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+          </span>
         </div>
       </n-list-item>
 
@@ -203,25 +263,45 @@ onMounted(() => {
         </template>
       </n-list-item>
 
-      <n-list-item>
-        <div class="row">
-          <span>候选源池</span>
-          <span class="row__value">管理端</span>
-        </div>
-        <template #suffix>
-          <n-button size="small" quaternary tag="a" href="/admin/pool">打开</n-button>
-        </template>
-      </n-list-item>
+      <template v-if="auth.isAdmin.value">
+        <n-list-item
+          clickable
+          role="button"
+          tabindex="0"
+          @click="router.push({ name: 'admin-pool' })"
+          @keyup.enter="router.push({ name: 'admin-pool' })"
+        >
+          <div class="row">
+            <span class="row__label">
+              <n-icon size="17" class="row__icon"><LayersOutline /></n-icon>
+              <span>候选源池</span>
+            </span>
+            <span class="row__trailing">
+              <span class="row__value">管理端</span>
+              <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+            </span>
+          </div>
+        </n-list-item>
 
-      <n-list-item>
-        <div class="row">
-          <span>采集源管理</span>
-          <span class="row__value">管理端</span>
-        </div>
-        <template #suffix>
-          <n-button size="small" quaternary tag="a" href="/admin/sources">打开</n-button>
-        </template>
-      </n-list-item>
+        <n-list-item
+          clickable
+          role="button"
+          tabindex="0"
+          @click="router.push({ name: 'admin-sources' })"
+          @keyup.enter="router.push({ name: 'admin-sources' })"
+        >
+          <div class="row">
+            <span class="row__label">
+              <n-icon size="17" class="row__icon"><CloudUploadOutline /></n-icon>
+              <span>采集源管理</span>
+            </span>
+            <span class="row__trailing">
+              <span class="row__value">管理端</span>
+              <n-icon size="16" class="row__chevron"><ChevronForwardOutline /></n-icon>
+            </span>
+          </div>
+        </n-list-item>
+      </template>
     </n-list>
 
     <div class="footer">
@@ -253,8 +333,8 @@ onMounted(() => {
   width: 52px;
   height: 52px;
   font-size: 22px;
-  font-weight: 600;
-  color: #fff;
+  font-weight: 650;
+  color: var(--accent-fg);
   background: var(--accent);
   border-radius: 50%;
 }
@@ -282,9 +362,30 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.row__label {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.row__icon {
+  color: var(--text-muted);
+}
+
+.row__trailing {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
 .row__value {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.row__chevron {
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
 .footer {

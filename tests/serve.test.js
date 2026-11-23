@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import zlib from "node:zlib";
 
 import { APP_BASES, listen } from "../server/serve.js";
 
@@ -35,7 +36,7 @@ before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "funread-web-dist-"));
   fs.mkdirSync(path.join(root, "assets"));
   fs.writeFileSync(path.join(root, "index.html"), "<!doctype html><title>spa</title>", "utf8");
-  fs.writeFileSync(path.join(root, "assets", "app.js"), "export default 1;", "utf8");
+  fs.writeFileSync(path.join(root, "assets", "app.js"), "export default 1;\n".repeat(40), "utf8");
   fs.writeFileSync(path.join(root, "favicon.ico"), "icon", "utf8");
 
   backend = http.createServer((request, response) => {
@@ -202,6 +203,46 @@ describe("static serving", () => {
     const response = await fetchText(url("/readyz"));
     assert.equal(response.status, 200);
     assert.equal(seen.length, 0);
+  });
+
+  it("compresses text assets with gzip when requested", async () => {
+    const raw = await new Promise((resolve, reject) => {
+      const req = http.request(
+        url("/assets/app.js"),
+        { headers: { "Accept-Encoding": "gzip" } },
+        (res) => {
+          const chunks = [];
+          res.on("data", (chunk) => chunks.push(chunk));
+          res.on("end", () =>
+            resolve({ status: res.statusCode, headers: res.headers, buf: Buffer.concat(chunks) }),
+          );
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(raw.status, 200);
+    assert.equal(raw.headers["content-encoding"], "gzip");
+    assert.match(zlib.gunzipSync(raw.buf).toString("utf8"), /export default 1;/);
+  });
+
+  it("supports ETag 304 Not Modified and HEAD", async () => {
+    const first = await fetchText(url("/web"));
+    assert.equal(first.status, 200);
+    assert.ok(first.headers.etag);
+
+    const second = await fetchText(url("/web"), {
+      headers: { "If-None-Match": first.headers.etag },
+    });
+    assert.equal(second.status, 304);
+    assert.equal(second.body, "");
+
+    const head = await fetchText(url("/web"), { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.body, "");
+    assert.equal(head.headers["x-content-type-options"], "nosniff");
+    assert.equal(head.headers["x-frame-options"], "SAMEORIGIN");
+    assert.equal(head.headers["referrer-policy"], "strict-origin-when-cross-origin");
   });
 
   it("reports 503 when the build output is missing", async () => {

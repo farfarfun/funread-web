@@ -9,7 +9,7 @@
  */
 import { OpenOutline, SettingsOutline, StarOutline, Star } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -19,7 +19,7 @@ import ReaderSettingsSheet from "../../components/web/ReaderSettingsSheet.vue";
 import TopBar from "../../components/web/TopBar.vue";
 import { useReaderSettings } from "../../composables/useReaderSettings";
 import { useShortcuts } from "../../composables/useShortcuts";
-import { formatFeedDate } from "../../utils/display";
+import { formatFeedDate, safeExternalUrl } from "../../utils/display";
 
 /** 允许留在正文里的标签。其余一律拆掉但保留内部文字。 */
 const ALLOWED_TAGS = new Set([
@@ -120,6 +120,12 @@ const { colors, contentStyle } = useReaderSettings();
 
 const subId = computed(() => String(route.params.subId));
 const link = computed(() => String(route.query.link || ""));
+const feedRoute = computed(() => ({
+  name: "rss-feed",
+  params: { subId: subId.value },
+  query: route.query.category ? { category: String(route.query.category) } : {},
+}));
+const feedFallback = computed(() => `/web/rss/${encodeURIComponent(subId.value)}${route.query.category ? `?category=${encodeURIComponent(String(route.query.category))}` : ""}`);
 
 /** 列表页带过来的 variables。解不动就当空 —— 坏的 query 不该让整页打不开。 */
 const variables = computed<Record<string, string>>(() => {
@@ -139,23 +145,36 @@ const error = ref("");
 const favorited = ref(false);
 const showSettings = ref(false);
 let loadVersion = 0;
+let loadAbort: AbortController | null = null;
+
+onBeforeUnmount(() => {
+  loadAbort?.abort();
+});
 
 const safeHtml = computed(() => sanitize(article.value?.content_html || ""));
+const originalUrl = computed(() => safeExternalUrl(article.value?.link || link.value));
 
 async function load() {
   const version = ++loadVersion;
+  loadAbort?.abort();
+  const controller = new AbortController();
+  loadAbort = controller;
+  window.scrollTo({ top: 0 });
   loading.value = true;
   error.value = "";
   article.value = null;
   favorited.value = false;
   try {
-    const result = await api.rssArticle({
-      sub_id: subId.value,
-      link: link.value,
-      title: String(route.query.title || ""),
-      variables: variables.value,
-    });
-    if (version !== loadVersion) return;
+    const result = await api.rssArticle(
+      {
+        sub_id: subId.value,
+        link: link.value,
+        title: String(route.query.title || ""),
+        variables: variables.value,
+      },
+      { signal: controller.signal },
+    );
+    if (version !== loadVersion || controller.signal.aborted) return;
     article.value = result;
     favorited.value = result.favorited;
     //  打开即已读。这是订阅阅读的常规语义，不必再点一下。
@@ -168,7 +187,7 @@ async function load() {
       })
       .catch(() => undefined);
   } catch (reason) {
-    if (version !== loadVersion) return;
+    if (version !== loadVersion || controller.signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "正文加载失败";
   } finally {
     if (version === loadVersion) loading.value = false;
@@ -200,7 +219,7 @@ useShortcuts({
       showSettings.value = false;
       return;
     }
-    router.push({ name: "rss-feed", params: { subId: subId.value } });
+    router.push(feedRoute.value);
   },
 });
 
@@ -209,11 +228,12 @@ watch(() => route.fullPath, load, { immediate: true });
 
 <template>
   <div class="article" :style="{ background: colors.bg }">
-    <TopBar :title="article?.title || '文章'" back :fallback="`/web/rss/${subId}`">
+    <TopBar :title="article?.title || '文章'" back :fallback="feedFallback">
       <template #actions>
         <n-button
           quaternary
           circle
+          :disabled="!article"
           :aria-label="favorited ? '取消收藏' : '收藏'"
           @click="toggleFavorite"
         >
@@ -225,12 +245,12 @@ watch(() => route.fullPath, load, { immediate: true });
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
         </n-button>
         <n-button
-          v-if="article"
+          v-if="article && originalUrl"
           quaternary
           circle
           aria-label="在浏览器里打开"
           tag="a"
-          :href="article.link"
+          :href="originalUrl"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -253,16 +273,16 @@ watch(() => route.fullPath, load, { immediate: true });
       <template #footer>
         <n-button size="small" @click="load">重试</n-button>
         <n-button
-          v-if="link"
+          v-if="originalUrl"
           size="small"
           tag="a"
-          :href="link"
+          :href="originalUrl"
           target="_blank"
           rel="noopener noreferrer"
         >
           在浏览器里打开
         </n-button>
-        <n-button size="small" text @click="router.push({ name: 'rss-feed', params: { subId } })">
+        <n-button size="small" text @click="router.push(feedRoute)">
           回列表
         </n-button>
       </template>
@@ -287,8 +307,8 @@ watch(() => route.fullPath, load, { immediate: true });
         class="article__empty"
         :style="{ color: colors.muted }"
       >
-        这篇文章没有可显示的正文。
-        <a :href="article.link" target="_blank" rel="noopener noreferrer">在浏览器里打开</a>
+        当前源没有可显示的正文。
+        <a v-if="originalUrl" :href="originalUrl" target="_blank" rel="noopener noreferrer">在浏览器里打开原文</a>
       </p>
     </article>
 

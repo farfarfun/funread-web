@@ -39,7 +39,8 @@ const active = computed(() => route.meta.tab as string | undefined);
   z-index: 20;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-subtle);
   /* 手势条占的那一块也要让出来 */
   padding-bottom: env(safe-area-inset-bottom, 0);

@@ -10,6 +10,7 @@ import type {
   CollectReport,
   DeviceToken,
   DeviceTokenCreated,
+  CurrentDeviceToken,
   DownloadAccepted,
   DownloadProgress,
   ExploreKind,
@@ -56,6 +57,21 @@ export class UnauthorizedError extends Error {
   }
 }
 
+type UnauthorizedHandler = () => void;
+let onUnauthorized: UnauthorizedHandler | null = null;
+
+/** 注册全局 401 回调，用于在会话中途过期时清空本地认证态并引导重新登录。 */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler;
+}
+
+const AUTH_EXEMPT_401_PATHS = new Set([
+  "/auth/me",
+  "/auth/login",
+  "/auth/register",
+  "/auth/admin/login",
+]);
+
 function query(params?: Params): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params ?? {})) {
@@ -65,8 +81,10 @@ function query(params?: Params): string {
   return value ? `?${value}` : "";
 }
 
-async function request<T>(path: string, init?: RequestInit & { params?: Params }): Promise<T> {
-  const { params, ...rest } = init ?? {};
+type RequestOptions = RequestInit & { params?: Params; timeoutMs?: number };
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { params, timeoutMs, signal, ...rest } = init ?? {};
   //  打包版把 Web 资源打进了 app，页面来源是 `http://localhost`，请求用户自己的
   //  服务器属于**跨站** —— cookie 发不出去（后端 `allow_credentials=False`），
   //  所以基址来自用户填的地址、凭据是设备 token。
@@ -77,10 +95,30 @@ async function request<T>(path: string, init?: RequestInit & { params?: Params }
   const session = __FUNREAD_PACKAGED__ ? loadSession() : null;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (session) headers.Authorization = `Bearer ${session.token}`;
-  const response = await fetch(`${session ? session.server : ""}/api/v1${path}${query(params)}`, {
-    ...rest,
-    headers: { ...headers, ...rest.headers },
-  });
+
+  let controller: AbortController | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let effectiveSignal = signal;
+  if (timeoutMs && timeoutMs > 0) {
+    controller = new AbortController();
+    effectiveSignal = controller.signal;
+    if (signal) {
+      if (signal.aborted) controller.abort(signal.reason);
+      else signal.addEventListener("abort", () => controller?.abort(signal.reason), { once: true });
+    }
+    timer = setTimeout(() => controller?.abort(new Error("请求超时")), timeoutMs);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${session ? session.server : ""}/api/v1${path}${query(params)}`, {
+      ...rest,
+      signal: effectiveSignal,
+      headers: { ...headers, ...rest.headers },
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
   if (!response.ok) {
     let detail = `请求失败（HTTP ${response.status}）`;
     try {
@@ -94,6 +132,7 @@ async function request<T>(path: string, init?: RequestInit & { params?: Params }
       //  这条 token 不认了（被吊销、账号停用、或者服务器换了库）。留着它只会让
       //  接下来每个页面各撞一次 401，直接丢掉 —— 路由守卫会把人带回配置页。
       if (__FUNREAD_PACKAGED__) clearSession();
+      if (!AUTH_EXEMPT_401_PATHS.has(path)) onUnauthorized?.();
       throw new UnauthorizedError(detail);
     }
     throw new Error(detail);
@@ -154,6 +193,20 @@ export async function issueDeviceToken(payload: {
   return response.json() as Promise<DeviceTokenCreated>;
 }
 
+export async function verifyDeviceToken(server: string, token: string): Promise<CurrentDeviceToken> {
+  let response: Response;
+  try {
+    response = await fetch(`${server}/api/v1/auth/tokens/current`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error(`连不上 ${server}。请检查服务器地址和网络连接。`);
+  }
+  if (response.status === 401) throw new UnauthorizedError("设备凭据无效。");
+  if (!response.ok) throw new Error(`验证设备凭据失败（HTTP ${response.status}）`);
+  return response.json() as Promise<CurrentDeviceToken>;
+}
+
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 export const api = {
@@ -187,6 +240,8 @@ export const api = {
   //  设备 token。浏览器里靠 cookie 会话、打包版里靠自己那条 Bearer，后端两种都
   //  认，所以这一页在两种形态下都是活的 —— 手机丢了可以在电脑上吊销。
   devices: () => request<DeviceToken[]>("/auth/tokens"),
+  createDevice: (device_name: string) =>
+    request<DeviceTokenCreated>("/auth/tokens", { method: "POST", ...json({ device_name }) }),
   revokeDevice: (token_id: number) =>
     request<void>(`/auth/tokens/${token_id}`, { method: "DELETE" }),
 
@@ -196,19 +251,26 @@ export const api = {
     request<ManagedUser>(`/auth/users/${user_id}`, { method: "PATCH", ...json(patch) }),
 
   // -------------------------------------------------------------- 小说
-  search: (params: { keyword: string; limit?: number; offset?: number; max_sources?: number }) =>
-    request<SearchPage>("/reader/search", { params }),
-  bookInfo: (params: { url_id: number; book_url: string; name?: string; author?: string }) =>
-    request<BookInfo>("/reader/book", { params }),
+  search: (
+    params: { keyword: string; limit?: number; offset?: number; max_sources?: number },
+    options?: { signal?: AbortSignal },
+  ) => request<SearchPage>("/reader/search", { params, signal: options?.signal }),
+  bookInfo: (
+    params: { url_id: number; book_url: string; name?: string; author?: string },
+    options?: { signal?: AbortSignal },
+  ) => request<BookInfo>("/reader/book", { params, signal: options?.signal }),
   //  POST，不是 GET：引擎需要整个 BookInfo（含 variables）才能继续往下走。
-  toc: (url_id: number, book: BookInfo) =>
-    request<TocOut>("/reader/toc", { method: "POST", ...json({ url_id, book }) }),
-  content: (payload: {
-    url_id: number;
-    chapter: Chapter;
-    book?: BookInfo | null;
-    book_key?: string;
-  }) => request<ChapterContent>("/reader/content", { method: "POST", ...json(payload) }),
+  toc: (url_id: number, book: BookInfo, options?: { signal?: AbortSignal }) =>
+    request<TocOut>("/reader/toc", { method: "POST", signal: options?.signal, ...json({ url_id, book }) }),
+  content: (
+    payload: {
+      url_id: number;
+      chapter: Chapter;
+      book?: BookInfo | null;
+      book_key?: string;
+    },
+    options?: { signal?: AbortSignal },
+  ) => request<ChapterContent>("/reader/content", { method: "POST", signal: options?.signal, ...json(payload) }),
   //  这是一次**实时聚合搜索**，不是查库 —— 书架只记了当前在读的源。所以它慢
     //  （可能十几秒），而且返回搜索统计让界面能解释空列表。
     sourcesFor: (book_key: string) =>
@@ -217,13 +279,17 @@ export const api = {
     request<ScanReport>("/reader/scan", { method: "POST", params: { source_type, limit } }),
 
   // -------------------------------------------------------------- 发现页
-  exploreSources: (params: { q?: string; limit?: number; offset?: number }) =>
-    request<ExploreSourcePage>("/reader/explore/sources", { params }),
-  exploreKinds: (url_id: number) =>
-    request<ExploreKind[]>("/reader/explore/kinds", { params: { url_id } }),
+  exploreSources: (
+    params: { q?: string; limit?: number; offset?: number },
+    options?: { signal?: AbortSignal },
+  ) => request<ExploreSourcePage>("/reader/explore/sources", { params, signal: options?.signal }),
+  exploreKinds: (url_id: number, options?: { signal?: AbortSignal }) =>
+    request<ExploreKind[]>("/reader/explore/kinds", { params: { url_id }, signal: options?.signal }),
   //  `url` 是 exploreKinds 给的不透明令牌，原样回传。
-  explore: (params: { url_id: number; url: string; page?: number }) =>
-    request<ExplorePage>("/reader/explore", { params }),
+  explore: (
+    params: { url_id: number; url: string; page?: number },
+    options?: { signal?: AbortSignal },
+  ) => request<ExplorePage>("/reader/explore", { params, signal: options?.signal }),
 
   // -------------------------------------------------------------- 候选源池（B 端）
   pool: (params: { source_type?: SourceType; q?: string; state?: string; sort?: string; limit?: number; offset?: number }) =>
@@ -321,7 +387,8 @@ export const api = {
   // -------------------------------------------------------------- 订阅源
   rssSources: (params: { q?: string; limit?: number; offset?: number }) =>
     request<RssSourcePage>("/rss/sources", { params }),
-  subscriptions: () => request<Subscription[]>("/rss/subscriptions"),
+  subscriptions: (options?: { signal?: AbortSignal }) =>
+    request<Subscription[]>("/rss/subscriptions", { signal: options?.signal }),
   subscribeLegado: (url_id: number, title = "") =>
     request<Subscription>("/rss/subscriptions", {
       method: "POST",
@@ -337,26 +404,33 @@ export const api = {
   importOpml: (opml: string) =>
     request<OpmlImportResult>("/rss/subscriptions/import", { method: "POST", ...json({ opml }) }),
   exportOpml: () => request<OpmlExport>("/rss/subscriptions/export"),
-  rssCategories: (sub_id: string) =>
-    request<RssCategory[]>(`/rss/subscriptions/${sub_id}/categories`),
-  rssArticles: (params: {
-    sub_id: string;
-    category?: string;
-    next_url?: string;
-    page?: number;
-    limit?: number;
-  }) => request<RssArticlePage>("/rss/articles", { params }),
+  rssCategories: (sub_id: string, options?: { signal?: AbortSignal }) =>
+    request<RssCategory[]>(`/rss/subscriptions/${sub_id}/categories`, { signal: options?.signal }),
+  rssArticles: (
+    params: {
+      sub_id: string;
+      category?: string;
+      next_url?: string;
+      page?: number;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal },
+  ) => request<RssArticlePage>("/rss/articles", { params, signal: options?.signal }),
   //  variables 必须回传：规则会在列表页 @put、在正文页 @get。丢掉它，
   //  用这个模式的源会静默读到空正文。JSON 编码塞进 query —— 这是个 GET，
   //  要保持 URL 可链接（刷新能回到同一篇）。
-  rssArticle: (params: {
-    sub_id: string;
-    link: string;
-    title?: string;
-    variables?: Record<string, string>;
-  }) => {
+  rssArticle: (
+    params: {
+      sub_id: string;
+      link: string;
+      title?: string;
+      variables?: Record<string, string>;
+    },
+    options?: { signal?: AbortSignal },
+  ) => {
     const { variables, ...rest } = params;
     return request<RssArticleDetail>("/rss/article", {
+      signal: options?.signal,
       params: {
         ...rest,
         variables:

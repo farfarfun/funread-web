@@ -19,6 +19,7 @@ import { useRoute } from "vue-router";
 
 import { api } from "../../api/client";
 import type { PoolPage, PoolRules, PoolSource, SourceTestProgress, SourceType } from "../../api/types";
+import PoolRuleEditorModal from "../../components/admin/PoolRuleEditorModal.vue";
 import { formatTime, fromNow } from "../../utils/display";
 
 const message = useMessage();
@@ -723,24 +724,17 @@ onMounted(() => {
       @update:page-size="setPageSize"
     />
 
-    <n-modal v-model:show="editorOpen" preset="card" class="rules-modal" :title="editing?.source.name || '源规则'" :mask-closable="!editorSaving">
-      <n-spin :show="editorLoading">
-        <n-alert v-if="editorError" type="error" :title="editorError" class="alert" />
-        <n-alert v-if="editorHint" type="info" :title="editorHint" class="alert" />
-        <template v-if="editing">
-          <dl class="rules-meta">
-            <div><dt>原始地址</dt><dd>{{ editing.source.source_url || '未填写' }}</dd></div>
-            <div><dt>索引标识</dt><dd>{{ editing.index_key || '无' }}</dd></div>
-            <div><dt>状态</dt><dd>{{ editing.source.enabled ? '已启用' : '已停用' }} · {{ editing.source.is_complete ? '规则完整' : '规则不全' }} · {{ editing.source.has_explore ? '可浏览' : '不可浏览' }}</dd></div>
-          </dl>
-          <n-input v-model:value="editorText" type="textarea" :autosize="{ minRows: 16, maxRows: 26 }" spellcheck="false" aria-label="源规则 JSON" class="rules-editor" />
-          <div class="rules-actions">
-            <n-button @click="editorOpen = false">关闭</n-button>
-            <n-button type="primary" :loading="editorSaving" :disabled="optimizingId !== null" @click="saveEditor">保存规则</n-button>
-          </div>
-        </template>
-      </n-spin>
-    </n-modal>
+    <PoolRuleEditorModal
+      v-model:show="editorOpen"
+      v-model:text="editorText"
+      :editing="editing"
+      :loading="editorLoading"
+      :saving="editorSaving"
+      :optimizing="optimizingId !== null"
+      :error="editorError"
+      :hint="editorHint"
+      @save="saveEditor"
+    />
   </div>
 </template>
 
@@ -800,11 +794,11 @@ onMounted(() => {
 }
 
 .stat--good .stat__value {
-  color: #18a058;
+  color: var(--accent);
 }
 
 .stat--bad .stat__value {
-  color: #d03050;
+  color: var(--danger);
 }
 
 .filters {
@@ -830,14 +824,6 @@ onMounted(() => {
 
 .column-picker { display: grid; grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 8px 16px; }
 .mobile-pool__domain { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
-
-.rules-modal { width: min(900px, calc(100vw - 32px)); }
-.rules-meta { display: grid; gap: 8px; margin: 0 0 16px; font-size: 12px; }
-.rules-meta div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
-.rules-meta dt { color: var(--text-muted); }
-.rules-meta dd { margin: 0; overflow-wrap: anywhere; }
-.rules-editor :deep(textarea) { font-family: monospace; }
-.rules-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .testbar {
   display: flex;
@@ -875,15 +861,15 @@ onMounted(() => {
 }
 
 :deep(.bad) {
-  color: #d03050;
+  color: var(--danger);
 }
 
 :deep(.ok) {
-  color: #18a058;
+  color: var(--accent);
 }
 
 :deep(.warn) {
-  color: #f0a020;
+  color: var(--warning);
 }
 
 .mobile-pool-list { display: none; }
