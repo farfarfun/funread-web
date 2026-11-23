@@ -16,7 +16,7 @@ import {
   TimeOutline,
 } from "@vicons/ionicons5";
 import { useMessage } from "naive-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { api } from "../../api/client";
@@ -26,7 +26,6 @@ import type {
   ShelfBook,
   SwitchCandidate,
   SwitchSourcePage,
-  SwitchSourceResult,
 } from "../../api/types";
 import BookCover from "../../components/web/BookCover.vue";
 import ChapterList from "../../components/web/ChapterList.vue";
@@ -36,8 +35,12 @@ import TopBar from "../../components/web/TopBar.vue";
 import {
   cachedIndexes as readCachedIndexes,
   clearBook,
+  readBookOfflineMeta,
+  saveBookOfflineMeta,
   writeChapter,
 } from "../../utils/offline";
+import { safeExternalUrl } from "../../utils/display";
+import { describeSwitch } from "../../utils/switch";
 
 /** 一次下载的章节上限。下载由客户端驱动，这个数只是别让人一口气排两千章。 */
 const DOWNLOAD_BATCH = 200;
@@ -66,6 +69,11 @@ interface LocalDownload {
 }
 
 const downloading = ref<LocalDownload | null>(null);
+let downloadCancelled = false;
+let downloadAbort: AbortController | null = null;
+let loadAbort: AbortController | null = null;
+let loadVersion = 0;
+const offlineMode = ref(false);
 
 const loading = ref(true);
 const tocLoading = ref(false);
@@ -77,73 +85,103 @@ const chapterFilter = ref("");
 const showSources = ref(false);
 const sourcesLoading = ref(false);
 
+const offlineUrlId = ref(0);
 const urlId = computed(() => {
   const fromQuery = Number(route.query.url_id);
   if (Number.isFinite(fromQuery) && fromQuery > 0) return fromQuery;
-  return shelfBook.value?.url_id ?? 0;
+  return shelfBook.value?.url_id || offlineUrlId.value || 0;
 });
-
-/** 换源结果的中文说明。方式不同，用户要做的事不同。 */
-function describeSwitch(result: SwitchSourceResult, sourceName: string): string {
-  const where = sourceName ? `「${sourceName}」` : "新源";
-  const position = `第 ${result.chapter_index + 1} / ${result.total} 章`;
-  switch (result.method) {
-    case "exact":
-      return `已切换到${where}，定位到${position}`;
-    case "normalized":
-      return `已切换到${where}，按章节名定位到${position}`;
-    case "position":
-      return `已切换到${where}，按位置估到${position}，可能有偏差`;
-    case "none":
-      return `已切换到${where}，但没取到目录，请手动选章`;
-    default:
-      return `已切换到${where}`;
-  }
-}
 
 const onShelf = computed(() => shelfBook.value !== null);
 const currentIndex = computed(() => shelfBook.value?.progress?.chapter_index ?? -1);
 
 async function loadInfo() {
+  const version = ++loadVersion;
+  loadAbort?.abort();
+  const controller = new AbortController();
+  loadAbort = controller;
   loading.value = true;
   error.value = "";
+  offlineMode.value = false;
   try {
     //  先看书架：书架上有的话，当前源与进度都从那里来，不必依赖 query。
     const shelf = await api.shelf().catch(() => [] as ShelfBook[]);
+    if (version !== loadVersion || controller.signal.aborted) return;
     shelfBook.value = shelf.find((item) => item.book_key === bookKey.value) ?? null;
 
     const id = urlId.value;
     const bookUrl = String(route.query.book_url || shelfBook.value?.book_url || "");
     if (!id || !bookUrl) {
+      const offline = await readBookOfflineMeta(bookKey.value);
+      if (version !== loadVersion || controller.signal.aborted) return;
+      if (offline) {
+        offlineMode.value = true;
+        offlineUrlId.value = offline.url_id;
+        info.value = offline.info;
+        chapters.value = offline.chapters;
+        await refreshCache();
+        return;
+      }
       error.value = "缺少来源信息，请从搜索结果进入";
       return;
     }
-    info.value = await api.bookInfo({
-      url_id: id,
-      book_url: bookUrl,
-      name: String(route.query.name || shelfBook.value?.name || ""),
-      author: String(route.query.author || shelfBook.value?.author || ""),
-    });
-    await loadToc();
-    if (onShelf.value) await refreshCache();
+    try {
+      info.value = await api.bookInfo(
+        {
+          url_id: id,
+          book_url: bookUrl,
+          name: String(route.query.name || shelfBook.value?.name || ""),
+          author: String(route.query.author || shelfBook.value?.author || ""),
+        },
+        { signal: controller.signal },
+      );
+      if (version !== loadVersion || controller.signal.aborted) return;
+      await loadToc(controller.signal, version);
+      if (version !== loadVersion || controller.signal.aborted) return;
+      if (onShelf.value) await refreshCache();
+    } catch (reason) {
+      if (version !== loadVersion || controller.signal.aborted) return;
+      //  离线或源站暂不可用时，若本机已保存离线目录则无缝回退，保障地铁/飞行模式可读
+      const offline = await readBookOfflineMeta(bookKey.value);
+      if (version !== loadVersion || controller.signal.aborted) return;
+      if (offline) {
+        offlineMode.value = true;
+        offlineUrlId.value = offline.url_id;
+        info.value = offline.info;
+        chapters.value = offline.chapters;
+        await refreshCache();
+        return;
+      }
+      throw reason;
+    }
   } catch (reason) {
+    if (version !== loadVersion || controller.signal.aborted) return;
     error.value = reason instanceof Error ? reason.message : "加载失败";
   } finally {
-    loading.value = false;
+    if (version === loadVersion) loading.value = false;
   }
 }
 
-async function loadToc() {
+async function loadToc(signal?: AbortSignal, version = loadVersion) {
   if (!info.value || !urlId.value) return;
   tocLoading.value = true;
   tocError.value = "";
   try {
-    const result = await api.toc(urlId.value, info.value);
+    const result = await api.toc(urlId.value, info.value, { signal });
+    if (version !== loadVersion || signal?.aborted) return;
     chapters.value = result.items;
+    void saveBookOfflineMeta(bookKey.value, urlId.value, info.value, chapters.value);
   } catch (reason) {
+    if (version !== loadVersion || signal?.aborted) return;
+    const offline = await readBookOfflineMeta(bookKey.value);
+    if (offline?.chapters.length) {
+      offlineMode.value = true;
+      chapters.value = offline.chapters;
+      return;
+    }
     tocError.value = reason instanceof Error ? reason.message : "目录加载失败";
   } finally {
-    tocLoading.value = false;
+    if (version === loadVersion) tocLoading.value = false;
   }
 }
 
@@ -172,6 +210,7 @@ async function addToShelf() {
 async function removeFromShelf() {
   try {
     await api.removeFromShelf(bookKey.value);
+    await clearBook(bookKey.value);
     shelfBook.value = null;
     cachedIndexes.value = [];
     message.success("已移出书架");
@@ -203,6 +242,9 @@ async function switchTo(source: SwitchCandidate) {
   try {
     const result = await api.switchSource(bookKey.value, source.url_id, source.book_url);
     showSources.value = false;
+    //  换源后旧源的本机缓存章节序号不再对应，立即清理避免读到旧源正文
+    await clearBook(bookKey.value);
+    cachedIndexes.value = [];
     const text = describeSwitch(result, source.source_name);
     if (result.method === "none" || result.is_approximate) message.warning(text);
     else message.success(text);
@@ -245,23 +287,37 @@ async function download() {
   const concurrency = 3;
   let done = 0;
   let failed = 0;
+  downloadCancelled = false;
+  downloadAbort = new AbortController();
+  const signal = downloadAbort.signal;
   downloading.value = { total: pending.length, done: 0, failed: 0 };
+
+  //  先将当前目录与元信息落入本机 IndexedDB，确保下载完后真断网也能打开目录
+  if (info.value) {
+    void saveBookOfflineMeta(bookKey.value, urlId.value, info.value, chapters.value);
+  }
 
   const queue = [...pending];
   async function worker() {
     for (;;) {
+      if (downloadCancelled || signal.aborted) return;
       const chapter = queue.shift();
       if (!chapter || !info.value) return;
       try {
-        const content = await api.content({
-          url_id: urlId.value,
-          chapter,
-          book: info.value,
-          book_key: bookKey.value,
-        });
+        const content = await api.content(
+          {
+            url_id: urlId.value,
+            chapter,
+            book: info.value,
+            book_key: bookKey.value,
+          },
+          { signal },
+        );
+        if (downloadCancelled || signal.aborted) return;
         await writeChapter(bookKey.value, chapter.index, content);
         done += 1;
       } catch {
+        if (downloadCancelled || signal.aborted) return;
         //  单章失败不该中断整本：源站抽风、某一章被删都很常见，
         //  最后统一报个数，用户再点一次就只补没下到的那些。
         failed += 1;
@@ -273,12 +329,29 @@ async function download() {
   try {
     await Promise.all(Array.from({ length: concurrency }, worker));
     await refreshCache();
-    if (failed) message.warning(`下载完成，${done} 章成功，${failed} 章失败`);
-    else message.success(`已下载 ${done} 章到本机，可以离线读了`);
+    if (downloadCancelled) {
+      message.info(`已取消下载，已保存 ${done} 章`);
+    } else if (failed) {
+      message.warning(`下载完成，${done} 章成功，${failed} 章失败`);
+    } else {
+      message.success(`已下载 ${done} 章到本机，可以离线读了`);
+    }
   } finally {
     downloading.value = null;
+    downloadAbort = null;
   }
 }
+
+function cancelDownload() {
+  downloadCancelled = true;
+  downloadAbort?.abort();
+}
+
+onBeforeUnmount(() => {
+  loadAbort?.abort();
+  downloadCancelled = true;
+  downloadAbort?.abort();
+});
 
 async function clearCache() {
   await clearBook(bookKey.value);
@@ -308,6 +381,10 @@ function read(chapter: Chapter) {
   });
 }
 
+watch(bookKey, () => {
+  void loadInfo();
+});
+
 onMounted(loadInfo);
 </script>
 
@@ -336,16 +413,16 @@ onMounted(loadInfo);
            就是背景，所以每本书的详情页都带着自己的主色调。 -->
       <section class="hero">
         <div
-          v-if="info.cover_url"
+          v-if="safeExternalUrl(info.cover_url)"
           class="hero__bg"
-          :style="{ backgroundImage: `url(${info.cover_url})` }"
+          :style="{ backgroundImage: `url(${safeExternalUrl(info.cover_url)})` }"
           aria-hidden="true"
         />
         <div class="hero__veil" aria-hidden="true" />
         <div class="hero__arc" aria-hidden="true" />
 
         <div class="hero__main">
-          <BookCover :src="info.cover_url" :name="info.name" :width="104" :height="142" />
+          <BookCover :src="info.cover_url" :name="info.name" :author="info.author" :width="104" :height="142" />
           <div class="hero__body">
             <h2 class="hero__title">{{ info.name }}</h2>
             <p class="hero__author">{{ info.author || "未知作者" }}</p>
@@ -358,6 +435,11 @@ onMounted(loadInfo);
           </div>
         </div>
       </section>
+
+      <n-alert v-if="offlineMode" type="info" :bordered="false" class="offline-banner">
+        当前正在使用本机离线目录，已下载的章节可直接阅读。
+        <n-button text size="tiny" type="primary" @click="loadInfo">重试在线加载</n-button>
+      </n-alert>
 
       <!-- 来源与最新章节各自成行并带图标（对齐原版的 tv_origin / tv_lasted） -->
       <section class="meta">
@@ -414,6 +496,9 @@ onMounted(loadInfo);
           >
             <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
             下载未缓存章节
+          </n-button>
+          <n-button v-if="downloading" size="small" quaternary @click="cancelDownload">
+            取消下载
           </n-button>
           <n-popconfirm v-if="cachedIndexes.length" @positive-click="clearCache">
             <template #trigger><n-button size="small" quaternary>清空缓存</n-button></template>
@@ -670,10 +755,15 @@ onMounted(loadInfo);
   color: var(--text-muted);
 }
 
+.offline-banner {
+  margin: 0 var(--space-3) var(--space-2);
+  font-size: 12px;
+}
+
 .offline__error {
   margin: var(--space-2) 0 0;
   font-size: 12px;
-  color: #d03050;
+  color: var(--danger);
 }
 
 .offline__actions {

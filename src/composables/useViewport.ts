@@ -22,15 +22,21 @@ export const WIDE_BREAKPOINT = 900;
 const width = ref(typeof window === "undefined" ? 1280 : window.innerWidth);
 //  `pointer: coarse` 是「主输入是手指」的标准判定，比 UA 嗅探可靠。
 const coarse = ref(
-  typeof window === "undefined" ? false : window.matchMedia("(pointer: coarse)").matches,
+  typeof window === "undefined" || typeof window.matchMedia !== "function"
+    ? false
+    : window.matchMedia("(pointer: coarse)").matches,
 );
 
 if (typeof window !== "undefined") {
   //  不节流：resize 期间只改两个 ref，而 Vue 本来就会把渲染合批到下一帧。
   //  加节流反而会让拖窗口时的布局跟手感变差。
   window.addEventListener("resize", () => (width.value = window.innerWidth), { passive: true });
-  const media = window.matchMedia("(pointer: coarse)");
-  media.addEventListener("change", (event) => (coarse.value = event.matches));
+  if (typeof window.matchMedia === "function") {
+    const media = window.matchMedia("(pointer: coarse)");
+    const onChange = (event: MediaQueryListEvent) => (coarse.value = event.matches);
+    if (typeof media.addEventListener === "function") media.addEventListener("change", onChange);
+    else if (typeof media.addListener === "function") media.addListener(onChange);
+  }
 }
 
 export function useViewport() {

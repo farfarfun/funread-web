@@ -1,6 +1,6 @@
 {
   "name": "@farfarfun/funread-web",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "description": "funread 前端服务：/admin 采集源管理端与 /web 阅读端，运行时反代 /api 到 funread-api",
   "type": "module",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "build:packaged": "vue-tsc -b && vite build --mode packaged --outDir dist-packaged",
     "preview": "vite preview",
     "shots": "node scripts/shots.mjs",
+    "check:contract": "node scripts/check-api-contract.mjs",
     "serve": "node bin/cli.js server run",
     "test": "node --test \"tests/*.test.js\""
   },
