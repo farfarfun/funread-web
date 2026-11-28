@@ -135,7 +135,7 @@ fn about_metadata(app: &AppHandle) -> AboutMetadata<'static> {
         name: Some("funread".into()),
         version: Some(app.package_info().version.to_string()),
         copyright: Some("MIT · farfarfun".into()),
-        website: Some("https://github.com/farfarfun/funread-web".into()),
+        website: Some("https://github.com/farfarfun-read/funread-web".into()),
         website_label: Some("项目主页".into()),
         comments: Some(
             "Web 资源打在应用里，启动不用网络。\n\

@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/farfarfun/funread-web.git"
+    "url": "git+https://github.com/farfarfun-read/funread-web.git"
   },
   "engines": {
     "node": ">=20"

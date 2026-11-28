@@ -152,7 +152,7 @@ fn about_metadata(app: &AppHandle) -> AboutMetadata<'static> {
         name: Some("funread light".into()),
         version: Some(app.package_info().version.to_string()),
         copyright: Some("MIT · farfarfun".into()),
-        website: Some("https://github.com/farfarfun/funread-web".into()),
+        website: Some("https://github.com/farfarfun-read/funread-web".into()),
         website_label: Some("项目主页".into()),
         comments: Some(
             "只做一件事的壳：打开你自己那台 funread 服务器上的页面。\n\

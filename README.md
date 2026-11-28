@@ -1,6 +1,6 @@
 # funread-web
 
-[funread-api](https://github.com/farfarfun/funread-api)（依赖 [funread](https://github.com/farfarfun/funread) 核心库）的采集源管理界面。
+[funread-api](https://github.com/farfarfun-read/funread-api)（依赖 [funread](https://github.com/farfarfun-read/funread) 核心库）的采集源管理界面。
 
 <p align="center">
   <img src="docs/snapshots/shelf-dark.png" alt="书架" width="250">
@@ -43,7 +43,7 @@ pnpm dev
 ## 移动端：两个 Android 客户端
 
 两套 Capacitor 工程、两个包名，**可以装在同一台手机上对比**。打 `v*` tag 时 CI 会把
-两个 debug APK 都传到 [GitHub Release](https://github.com/farfarfun/funread-web/releases)
+两个 debug APK 都传到 [GitHub Release](https://github.com/farfarfun-read/funread-web/releases)
 上，直接下载安装。
 
 | | funread light（`mobile/`） | funread 打包版（`mobile-packaged/`） |
@@ -64,7 +64,7 @@ pnpm dev
 换一条长期凭据存在本机；「我的 → 我的设备」能看到所有设备并单条吊销。
 启用 Casdoor 后，在浏览器登录 Funread，进入「我的设备」创建凭据；打包版连接页
 选择「统一账号」并录入该凭据。浏览器与 light 版直接使用 Casdoor 登录页。
-Casdoor Application 和 API 配置见 [funread-api 文档](https://github.com/farfarfun/funread-api#casdoor-单点登录)。
+Casdoor Application 和 API 配置见 [funread-api 文档](https://github.com/farfarfun-read/funread-api#casdoor-单点登录)。
 
 ```bash
 cd mobile && npm install && npm run sync                    # light
